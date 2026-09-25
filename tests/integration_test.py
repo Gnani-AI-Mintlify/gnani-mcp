@@ -197,8 +197,78 @@ async def test_vc(client: GnaniClient, sink: AudioSink, reference_audio: Path) -
     out = sink.save(audio_bytes, extension="wav", stem="vc_cloned")
     ok(f"Cloned audio saved: {out}  ({len(audio_bytes):,} bytes)")
 
+async def test_batch_stt(client: GnaniClient) -> None:
+    section("5 · gnani_stt_batch_transcribe (Batch STT)")
+    # Use a short public audio file so the job completes quickly.
+    PUBLIC_URL = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"
+    # Use a real speech sample instead — point to one of our generated TTS files... 
+    # but those are local. We'll use a public Hindi speech sample.
+    PUBLIC_SPEECH_URL = (
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/2/21/"
+        "Simple_English.ogg/220px-Simple_English.ogg"
+    )
+    info(f"Submitting public URL job: {PUBLIC_SPEECH_URL}")
+    info("Language: en-IN | No diarization")
 
-# ── main ───────────────────────────────────────────────────────────────────
+    from gnani_mcp.tools.stt_batch import _BASE, _POLL_INTERVAL_SECONDS, _TERMINAL_STATUSES
+    import asyncio as _asyncio
+
+    # Step 1: Create
+    body = {
+        "config": {
+            "model": "gnani-prisma-v2.5",
+            "language_code": "en-IN",
+            "mode": "transcribe",
+            "with_diarization": False,
+            "is_multi_channel": False,
+            "with_denoise": False,
+        },
+        "source": {
+            "type": "cloud_storage",
+            "auth": {"mode": "public"},
+            "paths": [PUBLIC_SPEECH_URL],
+        },
+    }
+    create = await client.post_json(_BASE, json_body=body)
+    job_id = create["job_id"]
+    ok(f"Job created: {job_id}  status={create['status']}")
+
+    # Step 2: Start
+    await client.post_json(f"{_BASE}/{job_id}/start", json_body={})
+    ok("Job started")
+
+    # Step 3: Poll (max 5 min)
+    info("Polling every 10 s…")
+    for attempt in range(30):
+        await _asyncio.sleep(10)
+        status_r = await client.get_json(f"{_BASE}/{job_id}")
+        st = status_r.get("status", "")
+        prog = status_r.get("progress", {})
+        info(f"  [{attempt+1:2d}] {st}  {prog.get('completed_files',0)}/{prog.get('total_files','?')} files")
+        if st in _TERMINAL_STATUSES:
+            ok(f"Terminal status reached: {st}")
+            break
+    else:
+        fail("Job did not complete within 5 min — check manually")
+        return
+
+    if st in ("FAILED", "START_FAILED"):
+        fail(f"Job {st}: {status_r.get('cancel_reason', 'see /files for details')}")
+        return
+
+    # Step 4: Get files
+    files_r = await client.get_json(f"{_BASE}/{job_id}/files", params={"status": "COMPLETED", "limit": 100})
+    for f in files_r.get("data", []):
+        t_url = f.get("transcript_url")
+        if t_url:
+            t_data = await client.get_presigned(t_url)
+            ok(f"Transcript: {t_data.get('full_transcript', '')!r}")
+            ok(f"Duration: {t_data.get('duration_seconds')} s  Language: {t_data.get('language_code')}")
+        else:
+            fail(f"File {f.get('original_path')} → {f.get('status')}: {f.get('error_message')}")
+
+
+
 
 async def main() -> None:
     api_key = os.environ.get("GNANI_API_KEY")
@@ -226,6 +296,9 @@ async def main() -> None:
 
         # 4. Voice clone — embed + synthesize (uses TTS audio as reference)
         await test_vc(client, sink, tts_audio)
+
+        # 5. Batch STT — submit a public-URL job and poll to completion
+        await test_batch_stt(client)
 
         section("Summary")
         ok("All tests completed successfully!")

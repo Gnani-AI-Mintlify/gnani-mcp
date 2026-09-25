@@ -100,6 +100,34 @@ class GnaniClient:
         )
         return self._parse_json_response(resp)
 
+    async def post_json(
+        self,
+        path: str,
+        *,
+        json_body: dict[str, Any],
+    ) -> dict[str, Any]:
+        """POST application/json; parse and return the JSON response body."""
+        resp = await self._client.post(
+            path,
+            headers={**self._auth_headers(), "Content-Type": "application/json"},
+            json=json_body,
+        )
+        return self._parse_json_response(resp)
+
+    async def get_json(
+        self,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """GET request; parse and return the JSON response body."""
+        resp = await self._client.get(
+            path,
+            headers=self._auth_headers(),
+            params=params,
+        )
+        return self._parse_json_response(resp)
+
     async def post_json_binary(
         self,
         path: str,
@@ -171,6 +199,17 @@ class GnaniClient:
 
         exc_cls = _ERROR_TYPE_MAP.get(error_type) or _STATUS_CODE_MAP.get(resp.status_code, GnaniAPIError)
         raise exc_cls(message, resp.status_code)
+
+    async def get_presigned(self, url: str) -> dict[str, Any]:
+        """GET a pre-signed URL (no auth header). Used for transcript downloads."""
+        async with httpx.AsyncClient(timeout=_TIMEOUT, follow_redirects=True) as c:
+            resp = await c.get(url)
+        if not resp.is_success:
+            raise GnaniAPIError(
+                f"Failed to download transcript URL (HTTP {resp.status_code}): {resp.text[:200]}",
+                resp.status_code,
+            )
+        return resp.json()
 
     # ------------------------------------------------------------------
     # Lifecycle

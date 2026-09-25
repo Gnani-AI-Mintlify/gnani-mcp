@@ -84,9 +84,10 @@ def build_server() -> FastMCP:
         lifespan=_lifespan,
     )
 
-    from gnani_mcp.tools import stt, tts, voice_clone
+    from gnani_mcp.tools import stt, stt_batch, tts, voice_clone
 
     stt.register(mcp)
+    stt_batch.register(mcp)
     tts.register(mcp)
     voice_clone.register(mcp)
 
