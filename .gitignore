@@ -216,3 +216,12 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Gnani MCP — generated audio output files
+gnani_*.wav
+gnani_*.mp3
+gnani_*.ogg
+gnani_*.raw
+
+# Gnani credentials
+.gnani/
