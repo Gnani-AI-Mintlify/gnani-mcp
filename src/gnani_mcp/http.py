@@ -126,15 +126,46 @@ class GnaniClient:
         return resp.json()
 
     def _raise_from_response(self, resp: httpx.Response) -> None:
-        """Extract error details from the response and raise the appropriate exception."""
+        """Extract error details from the response and raise the appropriate exception.
+
+        Handles two error envelope shapes used by different Gnani API endpoints:
+
+        Shape A (STT / TTS):
+            {"success": false, "error": {"type": "...", "message": "..."}}
+
+        Shape B (Voice Clone):
+            {"detail": {"error_code": "...", "message": "...", "status_code": ...}}
+        """
         message: str
         error_type: str = "API_ERROR"
 
         try:
             body = resp.json()
-            error_detail = body.get("error", {})
-            message = error_detail.get("message") or resp.text or "Unknown error"
-            error_type = error_detail.get("type", "API_ERROR")
+
+            # Shape A — standard STT/TTS envelope
+            if "error" in body:
+                error_detail = body["error"]
+                message = error_detail.get("message") or resp.text or "Unknown error"
+                error_type = error_detail.get("type", "API_ERROR")
+
+            # Shape B — Voice Clone / alternate envelope
+            elif "detail" in body:
+                detail = body["detail"]
+                if isinstance(detail, dict):
+                    message = detail.get("message") or resp.text or "Unknown error"
+                    # Map error_code → error_type
+                    error_type = {
+                        "RATE_LIMITED": "RATE_LIMIT_ERROR",
+                        "UNAUTHORIZED": "FORBIDDEN",
+                        "FORBIDDEN": "FORBIDDEN",
+                        "BAD_REQUEST": "INVALID_REQUEST_ERROR",
+                    }.get(detail.get("error_code", ""), "API_ERROR")
+                else:
+                    message = str(detail) or resp.text or "Unknown error"
+
+            else:
+                message = resp.text or f"HTTP {resp.status_code}"
+
         except Exception:
             message = resp.text or f"HTTP {resp.status_code}"
 

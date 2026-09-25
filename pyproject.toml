@@ -94,6 +94,7 @@ ignore = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths   = ["tests"]
+python_files = ["test_*.py"]   # only collect test_*.py, not integration_test.py
 
 # ---------------------------------------------------------------------------
 # Mypy
