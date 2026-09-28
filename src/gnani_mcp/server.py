@@ -7,6 +7,11 @@ Usage
 Run the MCP server over stdio (default)::
 
     gnani-mcp
+    gnani-mcp --transport stdio
+
+Run the MCP server over HTTP::
+
+    gnani-mcp --transport http --host 127.0.0.1 --port 8000 --path /mcp
 
 Print the MCP client config JSON and exit::
 
@@ -150,6 +155,8 @@ def main() -> None:
         Print MCP client config JSON and exit.
     ``gnani-mcp --api-key=sk_... --print``
         Include the API key in the printed config.
+    ``gnani-mcp --transport http --host 127.0.0.1 --port 8000``
+        Run as an HTTP MCP server instead of stdio.
     """
     import argparse
 
@@ -171,6 +178,31 @@ def main() -> None:
         action="store_true",
         help="Print MCP client configuration JSON and exit",
     )
+    parser.add_argument(
+        "--transport",
+        default="stdio",
+        choices=["stdio", "http", "sse", "streamable-http"],
+        help=(
+            "Transport protocol: stdio (default), http, sse, or streamable-http. "
+            "Use stdio for Cursor/Claude Desktop local integration."
+        ),
+    )
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host for HTTP/SSE transports (default: 127.0.0.1). Ignored for stdio.",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Port for HTTP/SSE transports (default: 8000). Ignored for stdio.",
+    )
+    parser.add_argument(
+        "--path",
+        default="/mcp",
+        help="Endpoint path for HTTP/SSE transports (default: /mcp). Ignored for stdio.",
+    )
 
     args = parser.parse_args()
 
@@ -185,7 +217,22 @@ def main() -> None:
     )
 
     server = build_server()
-    server.run()
+    if args.transport == "stdio":
+        server.run(transport="stdio")
+    else:
+        logger.info(
+            "Starting HTTP transport=%s host=%s port=%s path=%s",
+            args.transport,
+            args.host,
+            args.port,
+            args.path,
+        )
+        server.run(
+            transport=args.transport,
+            host=args.host,
+            port=args.port,
+            path=args.path,
+        )
 
 
 if __name__ == "__main__":
