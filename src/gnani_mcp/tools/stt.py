@@ -6,7 +6,6 @@ Endpoint: POST https://api.vachana.ai/stt/v3
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 
 from fastmcp import Context, FastMCP
@@ -43,6 +42,12 @@ def register(mcp: FastMCP) -> None:
     )
     async def gnani_stt_transcribe(
         ctx: Context,
+        language_code: SttLanguageCode = Field(
+            description=(
+                "BCP-47 language code for the audio. "
+                "Supported: bn-IN, en-IN, gu-IN, hi-IN, kn-IN, ml-IN, mr-IN, pa-IN, ta-IN, te-IN."
+            ),
+        ),
         audio_path: str | None = Field(
             default=None,
             description="Absolute local path to the audio file (e.g. '/home/user/call.wav').",
@@ -61,12 +66,6 @@ def register(mcp: FastMCP) -> None:
                 "Filename including extension (e.g. 'recording.wav'). "
                 "Required when using ``audio_base64`` or ``audio_url`` so the MIME type "
                 "can be determined correctly."
-            ),
-        ),
-        language_code: SttLanguageCode = Field(
-            description=(
-                "BCP-47 language code for the audio. "
-                "Supported: bn-IN, en-IN, gu-IN, hi-IN, kn-IN, ml-IN, mr-IN, pa-IN, ta-IN, te-IN."
             ),
         ),
         format: str = Field(

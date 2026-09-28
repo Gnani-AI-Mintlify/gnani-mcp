@@ -69,6 +69,13 @@ def register(mcp: FastMCP) -> None:
     )
     async def gnani_stt_batch_transcribe(
         ctx: Context,
+        language_code: str = Field(
+            description=(
+                "BCP-47 language code. Supported: bn-IN, en-IN, hi-IN, kn-IN, ml-IN, "
+                "mr-IN, ta-IN, te-IN. Pass up to 3 comma-separated codes for automatic "
+                "language identification per file (e.g. 'hi-IN,en-IN')."
+            ),
+        ),
         audio_path: str | None = Field(
             default=None,
             description=(
@@ -81,13 +88,6 @@ def register(mcp: FastMCP) -> None:
             description=(
                 "Public HTTPS URL to the audio file (S3 presigned URLs work). "
                 "No 10 MB cap — bounded only by the 4-hour duration limit."
-            ),
-        ),
-        language_code: str = Field(
-            description=(
-                "BCP-47 language code. Supported: bn-IN, en-IN, hi-IN, kn-IN, ml-IN, "
-                "mr-IN, ta-IN, te-IN. Pass up to 3 comma-separated codes for automatic "
-                "language identification per file (e.g. 'hi-IN,en-IN')."
             ),
         ),
         with_diarization: bool = Field(
