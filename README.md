@@ -1,8 +1,8 @@
 # gnani-mcp
 
-Official Gnani AI MCP server. Exposes Gnani Speech-to-Text (Prisma v2.5), Text-to-Speech (Timbre v2.5), and Voice Clone APIs as first-class MCP tools, so any MCP-aware client (Claude Desktop, Claude Code, Cursor, Windsurf, Zed) can call them with zero boilerplate.
+Official Gnani AI MCP server. Exposes Gnani Speech-to-Text (Prisma v2.5), Text-to-Speech (Timbre v2.5), Voice Clone, and Batch STT APIs as first-class MCP tools, so any MCP-aware client (Claude Desktop, Claude Code, Cursor, Windsurf, Zed) can call them with zero boilerplate.
 
-Cross-platform Python package: **macOS, Windows, and Linux** (Python 3.11+).
+Cross-platform Python package: **macOS, Windows, and Linux** (Python 3.10+).
 
 ---
 
@@ -90,6 +90,10 @@ pip install gnani-mcp
 | `gnani_tts_list_voices` | Browse the full voice catalog with language, gender, persona, description |
 | `gnani_vc_generate_embedding` | Extract a speaker embedding from a reference audio clip (step 1 of voice cloning) |
 | `gnani_vc_synthesize` | Synthesize speech in a cloned voice using a speaker embedding (step 2) |
+| `gnani_stt_batch_transcribe` | Submit an audio file for batch transcription and poll until complete |
+| `gnani_stt_batch_status` | Poll the status of a running batch job by job ID |
+| `gnani_stt_batch_get_transcripts` | Download transcripts for a completed batch job |
+| `gnani_stt_batch_cancel` | Cancel a running batch job |
 
 ---
 
@@ -100,7 +104,7 @@ pip install gnani-mcp
 | `GNANI_API_KEY` | — | **Required.** Your Gnani API key. |
 | `GNANI_API_BASE_URL` | `https://api.vachana.ai` | Override for testing / staging. |
 | `GNANI_MCP_BASE_PATH` | `~/Desktop` | Directory where audio output files are saved. |
-| `GNANI_AUDIO_OUTPUT_MODE` | `files` | `files` · `resources` · `both` |
+| `GNANI_AUDIO_OUTPUT_MODE` | `files` | `files` · `resources` (base64, no disk) · `both` |
 
 ---
 
@@ -139,8 +143,22 @@ audio_result = gnani_vc_synthesize(
     text="नमस्ते, आप कैसे हैं?",
     speaker_embedding=speaker_embedding,
 )
-print(audio_result["audio_file"])  # path to saved WAV file
+print(audio_result["file_path"])  # absolute path to the saved WAV file
 ```
+
+---
+
+## HTTP Transport
+
+By default `gnani-mcp` runs over stdio (the standard MCP transport for local clients).  
+To expose the server over HTTP instead:
+
+```bash
+gnani-mcp --transport http --host 127.0.0.1 --port 8000 --path /mcp
+```
+
+Then point your client at `http://127.0.0.1:8000/mcp`.  
+Use `--transport sse` or `--transport streamable-http` for SSE-based transports.
 
 ---
 
@@ -157,13 +175,31 @@ uv pip install -e ".[dev]"
 # Run tests
 pytest -q
 
-# Run the MCP server locally
+# Lint / format
+ruff check src/ tests/
+ruff format src/ tests/
+
+# Run the MCP server locally (stdio)
 gnani-mcp
 
-# Print client config JSON
+# Run over HTTP
+gnani-mcp --transport http --port 8000
+
+# Print MCP client config JSON
 gnani-mcp --print
 gnani-mcp --api-key=your-key --print
 ```
+
+### Releasing to PyPI
+
+1. Bump `version` in `pyproject.toml`.
+2. Push a tag of the form `vX.Y.Z-qa`:
+
+   ```bash
+   git tag v0.1.1-qa && git push origin v0.1.1-qa
+   ```
+
+3. The **Publish to PyPI** GitHub Actions workflow runs automatically, verifies the tag matches the version, builds, and uploads to PyPI via [OIDC Trusted Publisher](https://docs.pypi.org/trusted-publishers/) (no API key required).
 
 ---
 

@@ -53,6 +53,7 @@ Homepage      = "https://gnani.ai"
 Documentation = "https://docs.gnani.ai"
 Repository    = "https://github.com/gnani-ai/gnani-mcp"
 Issues        = "https://github.com/gnani-ai/gnani-mcp/issues"
+Changelog     = "https://github.com/gnani-ai/gnani-mcp/releases"
 
 # ---------------------------------------------------------------------------
 # Build

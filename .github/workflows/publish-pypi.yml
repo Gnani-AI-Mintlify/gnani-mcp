@@ -1,0 +1,80 @@
+name: Publish to PyPI
+
+# Triggers:
+#   - Push a tag like "v0.1.0-qa" → auto-publish that version.
+#   - workflow_dispatch with an optional version override.
+on:
+  push:
+    tags: ["v*-qa"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (e.g. 0.1.1). Leave blank to use pyproject.toml as-is."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write  # required for OIDC Trusted Publisher (no API key needed)
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.6.14"
+
+      - name: Resolve and verify version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          PKG_VERSION="$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")"
+
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            # Triggered by a tag push: strip leading "v" and trailing "-qa" (v0.1.0-qa → 0.1.0)
+            TAG="${GITHUB_REF_NAME}"
+            TARGET_VERSION="${TAG#v}"
+            TARGET_VERSION="${TARGET_VERSION%-qa}"
+            echo "Tag version  : $TARGET_VERSION"
+            echo "Package version: $PKG_VERSION"
+            if [ "$TARGET_VERSION" != "$PKG_VERSION" ]; then
+              echo "ERROR: tag version ($TARGET_VERSION) does not match pyproject.toml ($PKG_VERSION)"
+              exit 1
+            fi
+          elif [ -n "$INPUT_VERSION" ]; then
+            # Manual run with an explicit version: update pyproject.toml.
+            echo "Manual run: setting version to $INPUT_VERSION (was $PKG_VERSION)"
+            python - "$INPUT_VERSION" <<'PY'
+          import re, sys
+          version = sys.argv[1]
+          path = "pyproject.toml"
+          text = open(path, encoding="utf-8").read()
+          new, n = re.subn(
+              r'(?m)^(version\s*=\s*)"[^"]*"',
+              lambda m: f'{m.group(1)}"{version}"',
+              text,
+              count=1,
+          )
+          if n != 1:
+              sys.exit(f"Could not find a version line to update in {path}")
+          open(path, "w", encoding="utf-8").write(new)
+          print(f"Updated {path} → version = {version!r}")
+          PY
+          else
+            echo "Manual run: publishing pyproject.toml version $PKG_VERSION as-is"
+          fi
+
+      - name: Install dev deps and run tests
+        run: uv sync --extra dev && uv run pytest -q
+
+      - name: Build distributions
+        run: uv build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/

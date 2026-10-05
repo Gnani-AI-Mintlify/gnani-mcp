@@ -1,0 +1,6 @@
+# Ignore generated test audio files
+*.wav
+*.mp3
+*.ogg
+*.flac
+*.raw
