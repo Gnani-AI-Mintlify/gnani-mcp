@@ -1,0 +1,52 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-07-09/server.schema.json",
+  "name": "io.github.gnani-ai/gnani-mcp",
+  "description": "Official Gnani AI MCP server — Speech-to-Text (Prisma v2.5), Text-to-Speech (Timbre v2.5), Voice Clone, and Batch STT for 10 Indian languages",
+  "status": "active",
+  "repository": {
+    "url": "https://github.com/gnani-ai/gnani-mcp",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registry_type": "pypi",
+      "registry_base_url": "https://pypi.org",
+      "identifier": "gnani-mcp",
+      "version": "0.1.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environment_variables": [
+        {
+          "name": "GNANI_API_KEY",
+          "description": "Your Gnani / Vachana API key (starts with vach_).",
+          "is_required": true,
+          "format": "string",
+          "is_secret": true
+        },
+        {
+          "name": "GNANI_API_BASE_URL",
+          "description": "Override API base URL for testing/staging. Defaults to https://api.vachana.ai",
+          "is_required": false,
+          "format": "string",
+          "is_secret": false
+        },
+        {
+          "name": "GNANI_MCP_BASE_PATH",
+          "description": "Base path for audio file outputs. Defaults to ~/Desktop.",
+          "is_required": false,
+          "format": "string",
+          "is_secret": false
+        },
+        {
+          "name": "GNANI_AUDIO_OUTPUT_MODE",
+          "description": "Audio output mode: 'files' (default), 'resources', or 'both'.",
+          "is_required": false,
+          "format": "string",
+          "is_secret": false
+        }
+      ]
+    }
+  ]
+}

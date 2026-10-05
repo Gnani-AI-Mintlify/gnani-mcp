@@ -10,6 +10,7 @@ from typing import Any
 from fastmcp import Context, FastMCP
 from pydantic import Field
 
+from gnani_mcp.audio import make_filename
 from gnani_mcp.tools._common import (
     AudioContainer,
     AudioEncoding,
@@ -25,6 +26,17 @@ _TTS_PATH = "/api/v1/tts/inference"
 _DEFAULT_SAMPLE_RATE = 48_000
 _DEFAULT_CONTAINER: AudioContainer = "wav"
 _DEFAULT_ENCODING: AudioEncoding = "linear_pcm"
+
+
+def _container_to_mime(container: str) -> str:
+    return {
+        "wav": "audio/wav",
+        "mp3": "audio/mpeg",
+        "ogg": "audio/ogg",
+        "raw": "audio/pcm",
+        "mulaw": "audio/basic",
+        "alaw": "audio/basic",
+    }.get(container, "application/octet-stream")
 
 # Voice catalog — matches Available Voices page (42 voices, Timbre v2.5).
 _VOICE_CATALOG: list[dict[str, str]] = [
@@ -178,15 +190,19 @@ def register(mcp: FastMCP) -> None:
 
         audio_bytes = await sc.client.post_json_binary(_TTS_PATH, json_body=json_body)
 
-        out_path = sc.audio_sink.save(
+        ext = container if container not in ("mulaw", "alaw", "raw") else "raw"
+        stored = await sc.audio_sink.store(
             audio_bytes,
-            extension=container if container not in ("mulaw", "alaw", "raw") else "raw",
-            stem="tts",
+            filename=make_filename("tts", ext),
+            mime_type=_container_to_mime(container),
         )
 
         return {
-            "audio_file": str(out_path),
-            "size_bytes": len(audio_bytes),
+            "file_path": stored.file_path,
+            "resource_uri": stored.resource_uri,
+            "base64_data": stored.base64_data,
+            "mime_type": stored.mime_type,
+            "size_bytes": stored.size_bytes,
             "voice": voice,
             "language": language,
             "container": container,

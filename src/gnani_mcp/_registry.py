@@ -14,7 +14,8 @@ class ServerContext:
     """Holds all shared, lifespan-managed resources.
 
     An instance is created once at server startup (in ``server.py``) and
-    injected into every tool call via FastMCP's ``Context.request_context.lifespan_context``.
+    injected into every tool call via FastMCP's
+    ``Context.request_context.lifespan_context``.
     """
 
     config: Config

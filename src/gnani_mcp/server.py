@@ -55,7 +55,7 @@ async def _lifespan(_server: FastMCP) -> AsyncIterator[ServerContext]:
     )
 
     client = GnaniClient(base_url=config.base_url, api_key=config.api_key)
-    audio_sink = build_sink(config.base_path)
+    audio_sink = build_sink(config.output_mode, config.base_path)
 
     ctx = ServerContext(config=config, client=client, audio_sink=audio_sink)
 
