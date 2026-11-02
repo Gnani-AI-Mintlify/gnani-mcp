@@ -1,4 +1,4 @@
-"""Text-to-Speech tools — wrap the Gnani Timbre v2.5 REST endpoint.
+"""Text-to-Speech tools — wrap the Gnani Timbre v2.5 / v3.0 REST endpoint.
 
 Endpoint: POST https://api.vachana.ai/api/v1/tts/inference
 """
@@ -15,8 +15,19 @@ from gnani_mcp.tools._common import (
     AudioEncoding,
     MP3Bitrate,
     TtsLanguageCode,
-    TtsVoice,
     ready_ctx,
+)
+from gnani_mcp.voices import (
+    AUDIO_TAGS,
+    DEFAULT_TTS_MODEL,
+    V3_LANGUAGES,
+    TtsModel,
+    get_catalog,
+    inspect_audio_tags,
+    resolve_voice,
+)
+from gnani_mcp.voices import (
+    VOICE_CATALOG_V25 as _VOICE_CATALOG,  # noqa: F401 — kept for backwards-compatible imports
 )
 
 _TTS_PATH = "/api/v1/tts/inference"
@@ -26,51 +37,25 @@ _DEFAULT_SAMPLE_RATE = 48_000
 _DEFAULT_CONTAINER: AudioContainer = "wav"
 _DEFAULT_ENCODING: AudioEncoding = "linear_pcm"
 
-# Voice catalog — matches Available Voices page (42 voices, Timbre v2.5).
-_VOICE_CATALOG: list[dict[str, str]] = [
-    {"voice": "Ambuja",  "gender": "Female", "language": "hi-IN", "persona": "Professional",          "description": "Clear, composed virtual assistant"},
-    {"voice": "Asmita",  "gender": "Female", "language": "ta-IN", "persona": "Professional",          "description": "Polished, refined, smooth corporate voice"},
-    {"voice": "Bhavna",  "gender": "Female", "language": "hi-IN", "persona": "Friendly",              "description": "Friendly voice for customer support"},
-    {"voice": "Brinda",  "gender": "Female", "language": "ta-IN", "persona": "Professional",          "description": "Steady, even-paced professional voice"},
-    {"voice": "Chitra",  "gender": "Female", "language": "hi-IN", "persona": "Warm, empathetic",      "description": "Mature voice for customer care"},
-    {"voice": "Deepak",  "gender": "Male",   "language": "hi-IN", "persona": "Professional",          "description": "Clear, measured voice for corporate use"},
-    {"voice": "Devika",  "gender": "Female", "language": "en-IN", "persona": "Professional",          "description": "Authoritative voice for customer support"},
-    {"voice": "Dhruva",  "gender": "Male",   "language": "bn-IN", "persona": "Conversational",        "description": "Casual, relatable voice for conversations"},
-    {"voice": "Falak",   "gender": "Female", "language": "gu-IN", "persona": "Conversational",        "description": "Youthful, clear voice for narration"},
-    {"voice": "Girish",  "gender": "Male",   "language": "en-IN", "persona": "Expressive, energetic", "description": "Warm voice with natural storytelling"},
-    {"voice": "Hemraj",  "gender": "Male",   "language": "hi-IN", "persona": "Confident, authoritative", "description": "Confident voice for demos"},
-    {"voice": "Ishaan",  "gender": "Male",   "language": "mr-IN", "persona": "Professional",          "description": "Clear voice for instructions and narration"},
-    {"voice": "Jalaj",   "gender": "Male",   "language": "hi-IN", "persona": "Expressive, energetic", "description": "Expressive voice for storytelling"},
-    {"voice": "Jwala",   "gender": "Female", "language": "hi-IN", "persona": "Friendly",              "description": "Friendly, approachable everyday voice"},
-    {"voice": "Kaveri",  "gender": "Female", "language": "en-IN", "persona": "Professional",          "description": "Firm voice for customer support"},
-    {"voice": "Kavin",   "gender": "Male",   "language": "kn-IN", "persona": "Professional",          "description": "Firm, articulate voice for presentations"},
-    {"voice": "Kirra",   "gender": "Female", "language": "bn-IN", "persona": "Conversational",        "description": "Soft-spoken voice for casual conversations"},
-    {"voice": "Lavanya", "gender": "Female", "language": "te-IN", "persona": "Warm, empathetic",      "description": "Soft, empathetic voice for care and support"},
-    {"voice": "Lehara",  "gender": "Female", "language": "te-IN", "persona": "Warm, empathetic",      "description": "Gentle, reassuring voice for comfort and trust"},
-    {"voice": "Mehuli",  "gender": "Female", "language": "pa-IN", "persona": "Expressive, energetic", "description": "Expressive voice for commercials and promotions"},
-    {"voice": "Nalini",  "gender": "Female", "language": "hi-IN", "persona": "Friendly",              "description": "Friendly voice for playful conversations"},
-    {"voice": "Noopur",  "gender": "Female", "language": "ta-IN", "persona": "Friendly",              "description": "Warm voice for everyday conversations"},
-    {"voice": "Omkar",   "gender": "Male",   "language": "hi-IN", "persona": "Confident, authoritative", "description": "Energetic voice for customer support"},
-    {"voice": "Poorvi",  "gender": "Female", "language": "hi-en", "persona": "Conversational",        "description": "Natural voice for bilingual conversations"},
-    {"voice": "Pranav",  "gender": "Male",   "language": "en-IN", "persona": "Friendly",              "description": "Friendly voice for customer support"},
-    {"voice": "Reshma",  "gender": "Female", "language": "ml-IN", "persona": "Friendly",              "description": "Bright voice for greetings and support"},
-    {"voice": "Riyaan",  "gender": "Male",   "language": "ml-IN", "persona": "Conversational",        "description": "Easygoing voice for casual conversations"},
-    {"voice": "Roopesh", "gender": "Male",   "language": "hi-IN", "persona": "Professional",          "description": "Grounded, knowledgeable, professional voice"},
-    {"voice": "Saanvi",  "gender": "Female", "language": "kn-IN", "persona": "Expressive, energetic", "description": "Lively voice for ads and promotions"},
-    {"voice": "Shlok",   "gender": "Male",   "language": "en-IN", "persona": "Conversational",        "description": "Warm, conversational voice"},
-    {"voice": "Suhana",  "gender": "Female", "language": "te-IN", "persona": "Warm, empathetic",      "description": "Calm, soothing voice with confidence"},
-    {"voice": "Trisha",  "gender": "Female", "language": "ta-IN", "persona": "Friendly",              "description": "Warm, approachable voice for guidance"},
-    {"voice": "Trupti",  "gender": "Female", "language": "en-IN", "persona": "Professional",          "description": "Upbeat, articulate voice with maturity"},
-    {"voice": "Urmila",  "gender": "Female", "language": "hi-IN", "persona": "Professional",          "description": "Refined voice for formal announcements"},
-    {"voice": "Varuni",  "gender": "Female", "language": "te-IN", "persona": "Conversational",        "description": "Clear, natural voice for everyday use"},
-    {"voice": "Vedika",  "gender": "Female", "language": "ta-IN", "persona": "Professional",          "description": "Crisp, articulate voice for information"},
-    {"voice": "Veera",   "gender": "Male",   "language": "gu-IN", "persona": "Friendly",              "description": "Friendly voice for casual conversations"},
-    {"voice": "Vikrant", "gender": "Male",   "language": "hi-IN", "persona": "Conversational",        "description": "Warm, genuine conversational voice"},
-    {"voice": "Yashvi",  "gender": "Female", "language": "hi-IN", "persona": "Warm, empathetic",      "description": "Gentle, reassuring voice for comfort"},
-    {"voice": "Yukti",   "gender": "Female", "language": "te-IN", "persona": "Friendly",              "description": "Warm, welcoming voice that puts listeners at ease"},
-    {"voice": "Zahira",  "gender": "Female", "language": "mr-IN", "persona": "Expressive, energetic", "description": "Energetic voice for sales and casual chat"},
-    {"voice": "Zayan",   "gender": "Male",   "language": "pa-IN", "persona": "Warm, empathetic",      "description": "Soft, caring voice for empathetic conversations"},
-]
+_AUDIO_TAGS_DOC = ", ".join(f"<{t}>" for t in AUDIO_TAGS)
+
+
+def build_tts_warnings(model: str, text: str) -> list[str]:
+    """Return non-fatal warnings about audio tags in *text* for *model*."""
+    known, unknown = inspect_audio_tags(text)
+    warnings: list[str] = []
+    if model != "timbre-v3.0" and known:
+        warnings.append(
+            f"Audio tags {', '.join(f'<{t}>' for t in known)} are a Timbre v3.0 feature; "
+            "with timbre-v2.5 they are removed from the text and not spoken. "
+            "Set model='timbre-v3.0' to use them."
+        )
+    if model == "timbre-v3.0" and unknown:
+        warnings.append(
+            f"Unrecognised tag(s) {', '.join(f'<{t}>' for t in unknown)} will be stripped "
+            f"silently. Supported tags: {_AUDIO_TAGS_DOC}."
+        )
+    return warnings
 
 
 def register(mcp: FastMCP) -> None:
@@ -79,10 +64,16 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(
         name="gnani_tts_synthesize",
         description=(
-            "Synthesize speech from text using the Gnani Timbre v2.5 Text-to-Speech API. "
-            "Returns an audio file saved to disk. Supports 10 Indian languages + Hinglish, "
-            "with 42 voices.\n\n"
-            "**Recommended voices by language:**\n"
+            "Synthesize speech from text using the Gnani Timbre Text-to-Speech API. "
+            "Returns an audio file saved to disk.\n\n"
+            "**Models** (voices are NOT interchangeable between them):\n"
+            "- ``timbre-v2.5`` (default) — 42 voices; each has one preferred language "
+            "(10 Indian languages + Hinglish).\n"
+            "- ``timbre-v3.0`` — 13 voices that each speak all 10 languages and support "
+            f"inline audio tags: {_AUDIO_TAGS_DOC}. Tags apply from their position to the "
+            "end of the text (or the next tag); ``<pauses>`` inserts silence and is never "
+            "spoken. Tags count as billable characters.\n\n"
+            "**Timbre v2.5 voices by language:**\n"
             "- Hindi (hi-IN): Nalini (F), Deepak (M), Bhavna (F), Roopesh (M)\n"
             "- English (en-IN): Kaveri (F), Trupti (F), Pranav (M), Shlok (M)\n"
             "- Hinglish (hi-en): Poorvi (F)\n"
@@ -94,24 +85,35 @@ def register(mcp: FastMCP) -> None:
             "- Bengali (bn-IN): Kirra (F), Dhruva (M)\n"
             "- Gujarati (gu-IN): Falak (F), Veera (M)\n"
             "- Punjabi (pa-IN): Mehuli (F), Zayan (M)\n\n"
-            "Use ``gnani_tts_list_voices`` to browse the full catalog with descriptions.\n\n"
-            "**Important:** Pass numbers, dates, and currency as spoken words to avoid "
-            "mispronunciations. See the Input Formatting Guide at docs.gnani.ai."
+            "**Timbre v3.0 voices:** Shivani, Lakshmi, Kalpana, Chetana, Vasudha, Riyaa, "
+            "Tarika (F); Avinash, Shubham, Prakash, Devansh, Yashraj, Harshad (M).\n\n"
+            "Use ``gnani_tts_list_voices`` (with ``model``) to browse the full catalog with "
+            "personas and descriptions.\n\n"
+            "Numbers, currency, dates and IDs are normalised to spoken form automatically "
+            "by the API — write text naturally."
         ),
     )
     async def gnani_tts_synthesize(
         ctx: Context,
         text: str = Field(
             description=(
-                "Text to synthesize. Pass numbers/dates/currency as spoken words for best results "
-                "(e.g. 'five thousand rupees' rather than '₹5000')."
+                "Text to synthesize. With model='timbre-v3.0' it may contain inline audio "
+                f"tags, e.g. 'Let me check. <pauses> Found it <laugh>'. Tags: {_AUDIO_TAGS_DOC}."
             ),
         ),
-        voice: TtsVoice = Field(
+        voice: str = Field(
             description=(
-                "Voice name from the Timbre v2.5 catalog. "
-                "Examples: 'Nalini' (Hindi F), 'Kaveri' (English F), 'Deepak' (Hindi M), "
-                "'Poorvi' (Hinglish F)."
+                "Voice name from the catalog of the selected model (case-insensitive). "
+                "timbre-v2.5 examples: 'Nalini' (Hindi F), 'Kaveri' (English F), 'Deepak' "
+                "(Hindi M), 'Poorvi' (Hinglish F). timbre-v3.0 examples: 'Shivani' (F), "
+                "'Avinash' (M)."
+            ),
+        ),
+        model: TtsModel = Field(
+            default=DEFAULT_TTS_MODEL,
+            description=(
+                "'timbre-v2.5' (default) or 'timbre-v3.0'. The model determines which "
+                "voices are valid and whether audio tags are honoured."
             ),
         ),
         language: TtsLanguageCode = Field(
@@ -119,7 +121,8 @@ def register(mcp: FastMCP) -> None:
             description=(
                 "Language of the input text. Use 'auto' to detect from script. "
                 "Supported: auto, hi-IN, en-IN, hi-en, ta-IN, te-IN, kn-IN, ml-IN, "
-                "mr-IN, pa-IN, bn-IN, gu-IN."
+                "mr-IN, pa-IN, bn-IN, gu-IN. For timbre-v2.5 match the voice's preferred "
+                "language; timbre-v3.0 voices speak all 10 languages."
             ),
         ),
         speed: float = Field(
@@ -157,6 +160,9 @@ def register(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         sc = await ready_ctx(ctx)
 
+        canonical_voice = resolve_voice(model, voice)
+        warnings = build_tts_warnings(model, text)
+
         audio_config: dict[str, Any] = {
             "sample_rate": sample_rate,
             "num_channels": 1,
@@ -169,8 +175,8 @@ def register(mcp: FastMCP) -> None:
 
         json_body: dict[str, Any] = {
             "text": text,
-            "voice": voice,
-            "model": "timbre-v2.5",
+            "voice": canonical_voice,
+            "model": model,
             "language": language,
             "speed": speed,
             "audio_config": audio_config,
@@ -184,33 +190,43 @@ def register(mcp: FastMCP) -> None:
             stem="tts",
         )
 
-        return {
+        result: dict[str, Any] = {
             "audio_file": str(out_path),
             "size_bytes": len(audio_bytes),
-            "voice": voice,
+            "model": model,
+            "voice": canonical_voice,
             "language": language,
             "container": container,
             "sample_rate": sample_rate,
         }
+        if warnings:
+            result["warnings"] = warnings
+        return result
 
     @mcp.tool(
         name="gnani_tts_list_voices",
         description=(
-            "List all available voices for the Gnani Timbre v2.5 TTS model. "
-            "Returns the full catalog of 42 voices with language, gender, persona, "
+            "List available voices for a Gnani Timbre TTS model, with gender, persona "
             "and description. Use this to find the right voice before calling "
             "``gnani_tts_synthesize``.\n\n"
-            "Filter by language to narrow results "
-            "(e.g. language='hi-IN' returns all Hindi voices)."
+            "``model='timbre-v2.5'`` (default) returns 42 voices, each with one preferred "
+            "language — filter with ``language`` (e.g. 'hi-IN'). "
+            "``model='timbre-v3.0'`` returns 13 voices that all speak every supported "
+            "language, so ``language`` is not a useful filter there.\n\n"
+            "Optionally filter by ``gender`` ('Male' or 'Female')."
         ),
     )
     async def gnani_tts_list_voices(
         ctx: Context,
+        model: TtsModel = Field(
+            default=DEFAULT_TTS_MODEL,
+            description="'timbre-v2.5' (default, 42 voices) or 'timbre-v3.0' (13 voices).",
+        ),
         language: str | None = Field(
             default=None,
             description=(
-                "Optional language code to filter by "
-                "(e.g. 'hi-IN', 'en-IN', 'ta-IN'). "
+                "Optional language code to filter by (e.g. 'hi-IN', 'en-IN', 'ta-IN'). "
+                "timbre-v2.5 only: filters on each voice's preferred language. "
                 "Returns all voices when omitted."
             ),
         ),
@@ -219,15 +235,19 @@ def register(mcp: FastMCP) -> None:
             description="Optional gender filter: 'Male' or 'Female'.",
         ),
     ) -> dict[str, Any]:
-        catalog = _VOICE_CATALOG
+        catalog = get_catalog(model)
 
-        if language is not None:
+        if language is not None and model == "timbre-v2.5":
             catalog = [v for v in catalog if v["language"] == language]
         if gender is not None:
             catalog = [v for v in catalog if v["gender"].lower() == gender.lower()]
 
-        return {
-            "model": "timbre-v2.5",
+        result: dict[str, Any] = {
+            "model": model,
             "total_voices": len(catalog),
             "voices": catalog,
         }
+        if model == "timbre-v3.0":
+            result["languages"] = V3_LANGUAGES
+            result["audio_tags"] = list(AUDIO_TAGS)
+        return result

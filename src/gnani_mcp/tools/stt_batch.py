@@ -23,7 +23,16 @@ from typing import Any
 from fastmcp import Context, FastMCP
 from pydantic import Field
 
-from gnani_mcp.tools._common import SttLanguageCode, guess_audio_mime, ready_ctx, resolve_file_input
+from gnani_mcp.tools._common import (
+    DEFAULT_STT_MODEL,
+    SttModel,
+    build_v3_context,
+    guess_audio_mime,
+    normalize_stt_language,
+    ready_ctx,
+    resolve_file_input,
+    validate_stt_format,
+)
 
 logger = logging.getLogger("gnani_mcp.tools.stt_batch")
 
@@ -38,8 +47,15 @@ _TERMINAL_STATUSES = frozenset(
     {"COMPLETED", "PARTIAL_FAILURE", "FAILED", "START_FAILED", "CANCELLED"}
 )
 
-# Batch STT language codes (Gujarati and Punjabi NOT supported here).
-BatchLanguageCode = str  # up to 3 comma-separated BCP-47 codes, e.g. "hi-IN,en-IN"
+# Value sent as ``config.model`` for Prisma v2.5 jobs. (The docs also list
+# ``prisma-v2.5``; this is the value this server has always sent.)
+_BATCH_V25_MODEL = "gnani-prisma-v2.5"
+
+# Job statuses accepted by the list-jobs ``status`` filter.
+_JOB_STATUSES = (
+    "CREATED", "STARTING", "QUEUED", "IN_PROGRESS", "COMPLETED",
+    "PARTIAL_FAILURE", "FAILED", "START_FAILED", "CANCELLING", "CANCELLED",
+)
 
 
 def register(mcp: FastMCP) -> None:
@@ -49,32 +65,41 @@ def register(mcp: FastMCP) -> None:
         name="gnani_stt_batch_transcribe",
         description=(
             "Transcribe long audio files (up to 4 hours each) or multiple files "
-            "asynchronously using the Gnani Prisma v2.5 Batch STT API.\n\n"
+            "asynchronously using the Gnani Prisma Batch STT API.\n\n"
             "**This tool runs the full flow automatically:** "
             "create job → start → poll every 10 s → fetch transcripts → return results.\n\n"
             "**Two ways to provide audio:**\n"
             "• Local file — set ``audio_path`` (max 10 MB per file via direct upload)\n"
             "• Public URL — set ``audio_url`` (HTTPS link, no size cap, bounded by 4-hour limit)\n\n"
-            "**Supported languages (8):** bn-IN, en-IN, hi-IN, kn-IN, ml-IN, mr-IN, ta-IN, te-IN.\n"
-            "Gujarati (gu-IN) and Punjabi (pa-IN) are NOT supported in Batch — use "
-            "``gnani_stt_transcribe`` (REST) for those.\n\n"
-            "**Diarization:** set ``with_diarization=True`` + ``num_speakers=2`` to get "
-            "per-speaker segments in the transcript.\n\n"
+            "**Models:**\n"
+            "- ``prisma-v2.5`` (default) — pass one language, or up to 3 comma-separated codes "
+            "(e.g. ``'hi-IN,en-IN'``) and the API identifies the language per file.\n"
+            "- ``prisma-v3.0`` — identifies the language of each *segment* itself: pass "
+            "``'indic-auto'`` or 1–4 codes. Adds ``format`` (verbatim | transcribe | codemix) and "
+            "context hints ``keyterms`` / ``topic`` / ``speaker_names``. These are refused with "
+            "any other model, and only these combinations are accepted: keyterms, topic, "
+            "topic + keyterms, or speaker_names.\n\n"
+            "**Languages:** bn-IN, en-IN, gu-IN, hi-IN, kn-IN, ml-IN, mr-IN, pa-IN, ta-IN, te-IN "
+            "(per the Batch docs).\n\n"
+            "**Diarization:** set ``with_diarization=True`` to get per-speaker segments "
+            "(``num_speakers`` is an upper limit, 1–8). With prisma-v3.0 speaker labels are "
+            "produced either way; the flag only decides whether a diarization failure fails the file.\n\n"
             "**Denoising:** set ``with_denoise=True`` for noisy call-centre or field recordings. "
-            "Leave off for clean audio — it adds processing time without changing the transcript.\n\n"
-            "**Multi-language identification:** pass up to 3 comma-separated codes as "
-            "``language_code`` (e.g. ``'hi-IN,en-IN'``) and the API identifies the language "
-            "per file automatically."
+            "Leave off for clean audio — it adds processing time without changing the transcript."
         ),
     )
     async def gnani_stt_batch_transcribe(
         ctx: Context,
         language_code: str = Field(
             description=(
-                "BCP-47 language code. Supported: bn-IN, en-IN, hi-IN, kn-IN, ml-IN, "
-                "mr-IN, ta-IN, te-IN. Pass up to 3 comma-separated codes for automatic "
-                "language identification per file (e.g. 'hi-IN,en-IN')."
+                "prisma-v2.5: one code, or up to 3 comma-separated codes for per-file language "
+                "identification. prisma-v3.0: 'indic-auto' (or 'auto'), or 1–4 comma-separated "
+                "codes. Codes: bn-IN, en-IN, gu-IN, hi-IN, kn-IN, ml-IN, mr-IN, pa-IN, ta-IN, te-IN."
             ),
+        ),
+        model: SttModel = Field(
+            default=DEFAULT_STT_MODEL,
+            description="'prisma-v2.5' (default) or 'prisma-v3.0'.",
         ),
         audio_path: str | None = Field(
             default=None,
@@ -92,11 +117,13 @@ def register(mcp: FastMCP) -> None:
         ),
         with_diarization: bool = Field(
             default=False,
-            description="Enable speaker diarization (who said what). Requires num_speakers.",
+            description="Enable speaker diarization (who said what).",
         ),
         num_speakers: int | None = Field(
             default=None,
-            description="Number of speakers (max 2). Required when with_diarization=True.",
+            description="Most speakers to separate (1–8; API default 5). It is an upper limit, not a target.",
+            ge=1,
+            le=8,
         ),
         with_denoise: bool = Field(
             default=False,
@@ -108,6 +135,26 @@ def register(mcp: FastMCP) -> None:
         is_multi_channel: bool = Field(
             default=False,
             description="Set True only for true multi-channel audio files.",
+        ),
+        format: str | None = Field(
+            default=None,
+            description=(
+                "prisma-v3.0 only: 'verbatim' | 'transcribe' | 'codemix'. Omit to let the "
+                "model choose per segment (transcribe for hi-IN/en-IN only, else verbatim). "
+                "Not supported on Batch: 'transliterate'; ITN."
+            ),
+        ),
+        keyterms: list[str] | None = Field(
+            default=None,
+            description="prisma-v3.0 only. Words or short phrases to favour (up to 200).",
+        ),
+        topic: str | None = Field(
+            default=None,
+            description="prisma-v3.0 only. What the recordings are about, 30–1,600 characters.",
+        ),
+        speaker_names: list[str] | None = Field(
+            default=None,
+            description="prisma-v3.0 only. 1–4 names that may be spoken. Cannot be combined with keyterms/topic.",
         ),
         callback_url: str | None = Field(
             default=None,
@@ -124,16 +171,18 @@ def register(mcp: FastMCP) -> None:
         if audio_path is not None and audio_url is not None:
             raise ValueError("Provide only one of audio_path or audio_url, not both.")
 
-        config: dict[str, Any] = {
-            "model": "gnani-prisma-v2.5",
-            "language_code": language_code,
-            "mode": "transcribe",
-            "with_diarization": with_diarization,
-            "is_multi_channel": is_multi_channel,
-            "with_denoise": with_denoise,
-        }
-        if with_diarization and num_speakers is not None:
-            config["num_speakers"] = num_speakers
+        config = _build_config(
+            model=model,
+            language_code=language_code,
+            fmt=format,
+            keyterms=keyterms,
+            topic=topic,
+            speaker_names=speaker_names,
+            with_diarization=with_diarization,
+            num_speakers=num_speakers,
+            is_multi_channel=is_multi_channel,
+            with_denoise=with_denoise,
+        )
 
         # ── Step 1: Create job ──────────────────────────────────────────
         await ctx.info("Creating batch STT job…")
@@ -254,6 +303,50 @@ def register(mcp: FastMCP) -> None:
         }
 
     @mcp.tool(
+        name="gnani_stt_batch_list_jobs",
+        description=(
+            "List Batch STT jobs for your organization, newest first, with optional status "
+            "filter and cursor pagination. Use it to find a ``job_id`` for "
+            "``gnani_stt_batch_status`` / ``gnani_stt_batch_get_transcripts`` / "
+            "``gnani_stt_batch_cancel`` — e.g. after a ``gnani_stt_batch_transcribe`` call timed out.\n\n"
+            "If ``pagination.has_more`` is true, pass ``pagination.next_cursor`` as ``cursor`` "
+            "to fetch the next page."
+        ),
+    )
+    async def gnani_stt_batch_list_jobs(
+        ctx: Context,
+        status: str | None = Field(
+            default=None,
+            description=(
+                "Only return jobs with this status: " + ", ".join(_JOB_STATUSES) + "."
+            ),
+        ),
+        limit: int = Field(default=20, ge=1, le=100, description="Page size (1–100)."),
+        cursor: str | None = Field(
+            default=None,
+            description="Pagination cursor from a previous response's pagination.next_cursor.",
+        ),
+    ) -> dict[str, Any]:
+        sc = await ready_ctx(ctx)
+
+        params: dict[str, Any] = {"limit": limit}
+        if status is not None:
+            normalized = status.strip().upper()
+            if normalized not in _JOB_STATUSES:
+                raise ValueError(
+                    f"Invalid status {status!r}. Allowed: {', '.join(_JOB_STATUSES)}."
+                )
+            params["status"] = normalized
+        if cursor:
+            params["cursor"] = cursor
+
+        payload = await sc.client.get_json(_BASE, params=params)
+        return {
+            "jobs": payload.get("data", []),
+            "pagination": payload.get("pagination", {"has_more": False, "next_cursor": None}),
+        }
+
+    @mcp.tool(
         name="gnani_stt_batch_status",
         description=(
             "Check the status and progress of an existing Batch STT job.\n\n"
@@ -362,3 +455,52 @@ def register(mcp: FastMCP) -> None:
             "status": payload.get("status"),
             "message": payload.get("message"),
         }
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _build_config(
+    *,
+    model: str,
+    language_code: str,
+    fmt: str | None = None,
+    keyterms: list[str] | None = None,
+    topic: str | None = None,
+    speaker_names: list[str] | None = None,
+    with_diarization: bool = False,
+    num_speakers: int | None = None,
+    is_multi_channel: bool = False,
+    with_denoise: bool = False,
+) -> dict[str, Any]:
+    """Validate inputs and build the Batch job ``config`` object."""
+    lang = normalize_stt_language(language_code, model, batch=True)
+    if fmt is not None and model != "prisma-v3.0":
+        raise ValueError(
+            "format is only supported with model='prisma-v3.0' on Batch "
+            "(Batch refuses it on other models; ITN is not supported on Batch)."
+        )
+    style = validate_stt_format(fmt, model, batch=True)
+    context = build_v3_context(
+        model=model,
+        keyterms=keyterms,
+        topic=topic,
+        speaker_names=speaker_names,
+        batch=True,
+    )
+    config: dict[str, Any] = {
+        "model": "prisma-v3.0" if model == "prisma-v3.0" else _BATCH_V25_MODEL,
+        "language_code": lang,
+        "mode": "transcribe",
+        "with_diarization": with_diarization,
+        "is_multi_channel": is_multi_channel,
+        "with_denoise": with_denoise,
+    }
+    if with_diarization and num_speakers is not None:
+        config["num_speakers"] = num_speakers
+    if style is not None:
+        config["format"] = style
+    config.update(context)
+    return config
