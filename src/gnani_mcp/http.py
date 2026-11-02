@@ -8,7 +8,10 @@ touch httpx directly.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import random
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
@@ -25,6 +28,13 @@ logger = logging.getLogger("gnani_mcp.http")
 
 # Generous but bounded timeouts: connect quickly, give reads up to 2 min.
 _TIMEOUT = httpx.Timeout(connect=10.0, read=120.0, write=30.0, pool=5.0)
+
+# HTTP 429 handling — the API asks clients to "wait and retry with backoff".
+# Rate-limited requests are rejected before any work is done, so retrying every
+# method (including POST) is safe.
+_MAX_RATE_LIMIT_RETRIES = 5
+_BACKOFF_BASE_SECONDS = 1.0
+_BACKOFF_MAX_SECONDS = 10.0
 
 # Error-type string → exception class mapping (from Gnani API error envelope).
 _ERROR_TYPE_MAP: dict[str, type[GnaniAPIError]] = {
@@ -54,9 +64,18 @@ class GnaniClient:
         await client.aclose()
     """
 
-    def __init__(self, base_url: str, api_key: str | None = None) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str | None = None,
+        *,
+        max_retries: int = _MAX_RATE_LIMIT_RETRIES,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ) -> None:
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
+        self._max_retries = max_retries
+        self._sleep = sleep
         self._client = httpx.AsyncClient(
             base_url=self._base_url,
             timeout=_TIMEOUT,
@@ -84,6 +103,44 @@ class GnaniClient:
     # Request helpers
     # ------------------------------------------------------------------
 
+    async def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+        """Send a request, retrying HTTP 429 responses with exponential backoff.
+
+        Honours ``Retry-After`` (seconds) when present. Any file objects in
+        ``files`` are rewound before each retry so uploads are resent in full.
+        """
+        attempt = 0
+        while True:
+            resp = await self._client.request(method, path, **kwargs)
+            if resp.status_code != 429 or attempt >= self._max_retries:
+                return resp
+            delay = self._retry_delay(resp, attempt)
+            logger.warning(
+                "HTTP 429 from %s %s — retrying in %.1fs (%d/%d)",
+                method, path, delay, attempt + 1, self._max_retries,
+            )
+            await self._sleep(delay)
+            attempt += 1
+            self._rewind_files(kwargs.get("files"))
+
+    @staticmethod
+    def _retry_delay(resp: httpx.Response, attempt: int) -> float:
+        retry_after = resp.headers.get("retry-after")
+        if retry_after:
+            try:
+                return min(max(float(retry_after), 0.0), 60.0)
+            except ValueError:
+                pass
+        backoff = min(_BACKOFF_BASE_SECONDS * (2**attempt), _BACKOFF_MAX_SECONDS)
+        return backoff + random.uniform(0, backoff / 4)  # noqa: S311 — jitter, not security
+
+    @staticmethod
+    def _rewind_files(files: dict[str, Any] | None) -> None:
+        for value in (files or {}).values():
+            fh = value[1] if isinstance(value, tuple) and len(value) > 1 else value
+            if hasattr(fh, "seek"):
+                fh.seek(0)
+
     async def post_multipart(
         self,
         path: str,
@@ -92,7 +149,8 @@ class GnaniClient:
         files: dict[str, Any],
     ) -> dict[str, Any]:
         """POST multipart/form-data; parse and return the JSON response body."""
-        resp = await self._client.post(
+        resp = await self._request(
+            "POST",
             path,
             headers=self._auth_headers(),
             data=data,
@@ -107,7 +165,8 @@ class GnaniClient:
         json_body: dict[str, Any],
     ) -> dict[str, Any]:
         """POST application/json; parse and return the JSON response body."""
-        resp = await self._client.post(
+        resp = await self._request(
+            "POST",
             path,
             headers={**self._auth_headers(), "Content-Type": "application/json"},
             json=json_body,
@@ -121,7 +180,8 @@ class GnaniClient:
         params: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """GET request; parse and return the JSON response body."""
-        resp = await self._client.get(
+        resp = await self._request(
+            "GET",
             path,
             headers=self._auth_headers(),
             params=params,
@@ -135,7 +195,8 @@ class GnaniClient:
         json_body: dict[str, Any],
     ) -> bytes:
         """POST application/json; return raw binary response content (audio bytes)."""
-        resp = await self._client.post(
+        resp = await self._request(
+            "POST",
             path,
             headers={**self._auth_headers(), "Content-Type": "application/json"},
             json=json_body,

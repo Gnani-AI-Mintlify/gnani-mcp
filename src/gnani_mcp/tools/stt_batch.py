@@ -214,7 +214,15 @@ def register(mcp: FastMCP) -> None:
         await ctx.info(f"Job created: {job_id} — starting transcription…")
 
         # ── Step 2: Start job ───────────────────────────────────────────
-        await sc.client.post_json(f"{_BASE}/{job_id}/start", json_body={})
+        try:
+            await sc.client.post_json(f"{_BASE}/{job_id}/start", json_body={})
+        except Exception:
+            # Don't leave a never-started job behind (it would sit in CREATED forever).
+            try:
+                await sc.client.post_json(f"{_BASE}/{job_id}/cancel", json_body={})
+            except Exception:  # noqa: BLE001 — best effort cleanup
+                logger.warning("Could not cancel job %s after failed start", job_id)
+            raise
         await ctx.info("Job started — polling for completion (every 10 s)…")
 
         # ── Step 3: Poll until terminal ─────────────────────────────────

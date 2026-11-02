@@ -165,3 +165,16 @@ async def test_batch_list_jobs() -> None:
     assert q["status"] == "COMPLETED"
     assert q["limit"] == "5"
     assert res.data["jobs"][0]["job_id"] == "j1"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_batch_cancels_orphan_job_when_start_fails(wav: str) -> None:
+    respx.post(f"{BASE}/stt/v3/batch/jobs").mock(return_value=httpx.Response(201, json={"job_id": "j9", "status": "CREATED"}))
+    respx.post(f"{BASE}/stt/v3/batch/jobs/j9/start").mock(
+        return_value=httpx.Response(400, json={"error": {"type": "INVALID_REQUEST_ERROR", "message": "nope"}})
+    )
+    cancel = respx.post(f"{BASE}/stt/v3/batch/jobs/j9/cancel").mock(return_value=httpx.Response(200, json={"status": "CANCELLED"}))
+    res = await _call("gnani_stt_batch_transcribe", {"audio_path": wav, "language_code": "hi-IN"}, raise_on_error=False)
+    assert res.is_error
+    assert cancel.called
