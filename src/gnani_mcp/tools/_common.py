@@ -288,7 +288,8 @@ async def resolve_file_input(
 
     # Determine temp file suffix from optional filename hint.
     suffix = Path(filename).suffix if filename else ""
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    # delete=False on purpose: the file is cleaned up in the ``finally`` block below.
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)  # noqa: SIM115
     tmp_path = Path(tmp.name)
 
     try:
@@ -305,7 +306,7 @@ async def resolve_file_input(
             tmp.close()  # close before writing via httpx
             shown = redact_url(file_url)
             try:
-                async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as dl:
+                async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as dl:  # noqa: SIM117
                     async with dl.stream("GET", file_url) as resp:
                         if not resp.is_success:  # also catches un-followed redirects (3xx)
                             raise ValueError(
@@ -431,10 +432,8 @@ def validate_stt_format(
     if fmt is None:
         return None
     fmt = fmt.strip().lower()
-    if model == "prisma-v3.0":
-        allowed = _BATCH_V3_FORMATS if batch else _V3_FORMATS
-    else:
-        allowed = _V25_FORMATS
+    v3_formats = _BATCH_V3_FORMATS if batch else _V3_FORMATS
+    allowed = v3_formats if model == "prisma-v3.0" else _V25_FORMATS
     if fmt not in allowed:
         extra = ""
         if fmt in _V3_FORMATS:
@@ -485,10 +484,8 @@ def normalize_stt_language(
             raise ValueError("Use 'indic-auto' for automatic language detection.")
         return "indic-auto"
 
-    if model == "prisma-v3.0":
-        max_codes = 4
-    else:
-        max_codes = 3 if batch else 1
+    v25_max_codes = 3 if batch else 1
+    max_codes = 4 if model == "prisma-v3.0" else v25_max_codes
 
     if len(set(codes)) != len(codes):
         raise ValueError(f"Duplicate language codes in {raw!r}.")
@@ -544,7 +541,8 @@ def build_v3_context(
             raise ValueError(f"topic must be at most {MAX_TOPIC_CHARS} characters (got {len(t)}).")
         if batch and len(t) < MIN_BATCH_TOPIC_CHARS:
             raise ValueError(
-                f"On Batch, topic must be {MIN_BATCH_TOPIC_CHARS}-{MAX_TOPIC_CHARS} characters (got {len(t)})."
+                f"On Batch, topic must be {MIN_BATCH_TOPIC_CHARS}-{MAX_TOPIC_CHARS} "
+                f"characters (got {len(t)})."
             )
         _check_markers("topic", [t])
         supplied["topic"] = t

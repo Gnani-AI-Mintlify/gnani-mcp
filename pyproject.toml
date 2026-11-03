@@ -30,7 +30,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "fastmcp>=0.4.0",
+    "fastmcp>=2.12,<5",
     "httpx>=0.27.0",
     "pydantic>=2.6",
     "anyio>=4.3",
@@ -85,7 +85,8 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["B011"]
+"tests/**" = ["B011", "E501"]
+"src/gnani_mcp/voices.py" = ["E501"]  # static voice catalog: one dict per line
 
 # ---------------------------------------------------------------------------
 # Pytest

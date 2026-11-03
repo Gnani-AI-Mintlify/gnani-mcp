@@ -36,10 +36,8 @@ def fix_wav_header(data: bytes) -> bytes:
         body = off + 8
         if chunk_id == b"data":
             remaining = len(data) - body
-            if size != _UNKNOWN_SIZE and size <= remaining:
-                new_data_size = size  # header is already plausible
-            else:
-                new_data_size = remaining
+            # Keep the declared size when the header is already plausible.
+            new_data_size = size if size != _UNKNOWN_SIZE and size <= remaining else remaining
             out = bytearray(data)
             struct.pack_into("<I", out, off + 4, new_data_size)
             struct.pack_into("<I", out, 4, len(data) - 8)

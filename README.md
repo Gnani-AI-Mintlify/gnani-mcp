@@ -2,7 +2,7 @@
 
 Official Gnani AI MCP server. Exposes Gnani Speech-to-Text (Prisma v2.5 / v3.0), Text-to-Speech (Timbre v2.5 / v3.0), and Voice Clone APIs as first-class MCP tools, so any MCP-aware client (Claude Desktop, Claude Code, Cursor, Windsurf, Zed) can call them with zero boilerplate.
 
-Cross-platform Python package: **macOS, Windows, and Linux** (Python 3.11+).
+Cross-platform Python package: **macOS, Windows, and Linux** (Python 3.10+).
 
 ---
 

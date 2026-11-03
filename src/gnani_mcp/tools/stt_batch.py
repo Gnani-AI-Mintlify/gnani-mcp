@@ -18,8 +18,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from pathlib import Path
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -31,9 +31,9 @@ from gnani_mcp.tools._common import (
     SttModel,
     build_v3_context,
     guess_audio_mime,
-    redact_url,
     normalize_stt_language,
     ready_ctx,
+    redact_url,
     resolve_file_input,
     validate_stt_format,
 )
@@ -140,7 +140,10 @@ def _failure_summary(results: list[dict[str, Any]]) -> str | None:
     failed = [r for r in results if r.get("status") != "COMPLETED"]
     if not failed:
         return None
-    parts = [f"{r.get('file') or r.get('file_id')}: {r.get('error')}" for r in failed[:_MAX_FAILURES_IN_SUMMARY]]
+    parts = [
+        f"{r.get('file') or r.get('file_id')}: {r.get('error')}"
+        for r in failed[:_MAX_FAILURES_IN_SUMMARY]
+    ]
     more = len(failed) - len(parts)
     if more > 0:
         parts.append(f"... and {more} more")
@@ -283,7 +286,10 @@ def register(mcp: FastMCP) -> None:
         ),
         speaker_names: list[str] | None = Field(
             default=None,
-            description="prisma-v3.0 only. 1–4 names that may be spoken. Cannot be combined with keyterms/topic.",
+            description=(
+                "prisma-v3.0 only. 1–4 names that may be spoken. "
+                "Cannot be combined with keyterms/topic."
+            ),
         ),
         callback_url: str | None = Field(
             default=None,
@@ -322,11 +328,16 @@ def register(mcp: FastMCP) -> None:
             # Multipart upload
             async with resolve_file_input(file_path=audio_path) as path:
                 if path.stat().st_size == 0:
-                    raise ValueError(f"audio_path {path.name!r} is empty (0 bytes); there is nothing to transcribe.")
+                    raise ValueError(
+                        f"audio_path {path.name!r} is empty (0 bytes); there is nothing to transcribe."
+                    )
                 with path.open("rb") as fh:
                     create_payload = await sc.client.post_multipart(
                         _BASE,
-                        data={"config": json.dumps(config), **({"callback_url": callback_url} if callback_url else {})},
+                        data={
+                            "config": json.dumps(config),
+                            **({"callback_url": callback_url} if callback_url else {}),
+                        },
                         files={"files": (path.name, fh, guess_audio_mime(path))},
                     )
         else:
