@@ -18,7 +18,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from pathlib import Path
+from collections.abc import Awaitable, Callable
 from typing import Any
+from urllib.parse import urlsplit
 
 from fastmcp import Context, FastMCP
 from pydantic import Field
@@ -28,6 +31,7 @@ from gnani_mcp.tools._common import (
     SttModel,
     build_v3_context,
     guess_audio_mime,
+    redact_url,
     normalize_stt_language,
     ready_ctx,
     resolve_file_input,
@@ -56,6 +60,131 @@ _JOB_STATUSES = (
     "CREATED", "STARTING", "QUEUED", "IN_PROGRESS", "COMPLETED",
     "PARTIAL_FAILURE", "FAILED", "START_FAILED", "CANCELLING", "CANCELLED",
 )
+
+
+# Per-file listing: page size and a hard cap on pages (guards against a server
+# that keeps returning ``has_more`` / a repeating cursor).
+_FILES_PAGE_SIZE = 100
+_MAX_FILE_PAGES = 100
+# How many failed files to spell out in a one-line summary.
+_MAX_FAILURES_IN_SUMMARY = 10
+
+
+async def _fetch_file_results(
+    client: Any,
+    job_id: str,
+    *,
+    on_download: Callable[[str], Awaitable[None]] | None = None,
+) -> list[dict[str, Any]]:
+    """Return one result per file of *job_id*, whatever its status.
+
+    Files with a ``transcript_url`` are downloaded and returned with their
+    transcript.  Every other file (FAILED, CANCELLED, ...) is returned with its
+    ``status`` and the API's ``error_message`` as ``error`` — there is nothing to
+    download for them.  The listing is paged with the server-provided cursor so
+    jobs with more than one page of files are not truncated.
+    """
+    results: list[dict[str, Any]] = []
+    cursor: str | None = None
+    seen_cursors: set[str] = set()
+
+    for _ in range(_MAX_FILE_PAGES):
+        params: dict[str, Any] = {"limit": _FILES_PAGE_SIZE}
+        if cursor:
+            params["cursor"] = cursor
+        payload = await client.get_json(f"{_BASE}/{job_id}/files", params=params)
+
+        for entry in payload.get("data") or []:
+            name = entry.get("original_path")
+            transcript_url = entry.get("transcript_url")
+            if not transcript_url:
+                status = entry.get("status")
+                error = entry.get("error_message")
+                if not error and status != "COMPLETED":
+                    error = f"File ended with status {status} (the API gave no error message)."
+                results.append({
+                    "file": name,
+                    "file_id": entry.get("file_id"),
+                    "status": status,
+                    "duration_seconds": entry.get("duration_seconds"),
+                    "error": error,
+                })
+                continue
+
+            if on_download is not None:
+                await on_download(name or "")
+            transcript_data = await client.get_presigned(transcript_url)
+            results.append({
+                "file": name,
+                "file_id": entry.get("file_id"),
+                "status": "COMPLETED",
+                "language_code": transcript_data.get("language_code"),
+                "duration_seconds": transcript_data.get("duration_seconds"),
+                "full_transcript": transcript_data.get("full_transcript", ""),
+                "segments": transcript_data.get("segments"),
+            })
+
+        pagination = payload.get("pagination") or {}
+        cursor = pagination.get("next_cursor")
+        if not pagination.get("has_more") or not cursor or cursor in seen_cursors:
+            break
+        seen_cursors.add(cursor)
+    else:
+        logger.warning("Stopped listing files of job %s after %d pages", job_id, _MAX_FILE_PAGES)
+
+    return results
+
+
+def _failure_summary(results: list[dict[str, Any]]) -> str | None:
+    """One-line description of the files that did not produce a transcript."""
+    failed = [r for r in results if r.get("status") != "COMPLETED"]
+    if not failed:
+        return None
+    parts = [f"{r.get('file') or r.get('file_id')}: {r.get('error')}" for r in failed[:_MAX_FAILURES_IN_SUMMARY]]
+    more = len(failed) - len(parts)
+    if more > 0:
+        parts.append(f"... and {more} more")
+    return f"{len(failed)} file(s) did not produce a transcript — " + "; ".join(parts)
+
+
+def _validate_audio_url(url: str) -> str:
+    """Return the cleaned ``audio_url``, or raise before any job is created.
+
+    The server accepts anything at job-creation time and only discovers a bad path
+    when the job is started, leaving a dead ``START_FAILED`` record behind.  Only
+    obviously unusable values are rejected here — empty, not a web link, or no host.
+    ``http`` and ``https`` are both allowed; whether the file is reachable is for
+    the server to decide (it fetches from its own network).
+    """
+    cleaned = url.strip()
+    example = "e.g. 'https://example.com/call.wav'"
+    if not cleaned:
+        raise ValueError(f"audio_url is empty. Provide a public link to the audio file, {example}.")
+    try:
+        parts = urlsplit(cleaned)
+        has_host = bool(parts.hostname)
+    except ValueError:
+        parts, has_host = None, False
+    if parts is None or parts.scheme.lower() not in ("http", "https") or not has_host:
+        shown = cleaned.split("?")[0][:80]  # never echo a signed query string
+        raise ValueError(
+            f"audio_url {shown!r} is not a valid web link. It must start with http:// or "
+            f"https:// and include a host, {example}."
+        )
+    return cleaned
+
+
+def _start_failed_message(reason: str | None, source: str, *, from_url: bool) -> str:
+    """Explain a ``START_FAILED`` job: keep the server's reason, add the input and a hint."""
+    base = (reason or "").strip() or "The job failed to start."
+    if from_url:
+        hint = (
+            "The server could not use that audio_url. It must be a public link (no login, "
+            "not expired) that points directly at an audio file."
+        )
+    else:
+        hint = "The server could not use the uploaded file."
+    return f"{base} Input: {source}. {hint}"
 
 
 def register(mcp: FastMCP) -> None:
@@ -170,6 +299,8 @@ def register(mcp: FastMCP) -> None:
             raise ValueError("Provide either audio_path (local file) or audio_url (public HTTPS URL).")
         if audio_path is not None and audio_url is not None:
             raise ValueError("Provide only one of audio_path or audio_url, not both.")
+        if audio_url is not None:
+            audio_url = _validate_audio_url(audio_url)
 
         config = _build_config(
             model=model,
@@ -190,6 +321,8 @@ def register(mcp: FastMCP) -> None:
         if audio_path is not None:
             # Multipart upload
             async with resolve_file_input(file_path=audio_path) as path:
+                if path.stat().st_size == 0:
+                    raise ValueError(f"audio_path {path.name!r} is empty (0 bytes); there is nothing to transcribe.")
                 with path.open("rb") as fh:
                     create_payload = await sc.client.post_multipart(
                         _BASE,
@@ -258,57 +391,48 @@ def register(mcp: FastMCP) -> None:
         progress = status_payload.get("progress", {})
 
         if final_status == "START_FAILED":
+            source = redact_url(audio_url) if audio_url is not None else Path(audio_path or "").name
             return {
                 "job_id": job_id,
                 "status": final_status,
-                "error": status_payload.get("cancel_reason", "Job failed to start"),
+                "error": _start_failed_message(
+                    status_payload.get("cancel_reason"), source, from_url=audio_url is not None
+                ),
             }
 
+        async def _announce(name: str) -> None:
+            await ctx.info(f"Downloading transcript for {name}…")
+
         if final_status == "FAILED":
+            # Every file failed. The per-file ``error_message`` says why.
+            try:
+                failed_files = await _fetch_file_results(sc.client, job_id)
+            except Exception:  # noqa: BLE001 — still report the FAILED status
+                logger.warning("Could not list files of failed job %s", job_id, exc_info=True)
+                failed_files = []
             return {
                 "job_id": job_id,
                 "status": final_status,
                 "progress": progress,
-                "error": "All files failed. Check audio content — silence/tone-only audio is rejected.",
+                "error": _failure_summary(failed_files)
+                or "All files failed and the API returned no per-file error details. "
+                "Use gnani_stt_batch_status for the job state.",
+                "transcripts": failed_files,
             }
 
-        # ── Step 4: Get per-file results ────────────────────────────────
-        await ctx.info("Job complete — fetching transcript URLs…")
-        files_payload = await sc.client.get_json(
-            f"{_BASE}/{job_id}/files",
-            params={"status": "COMPLETED", "limit": 100},
-        )
+        # ── Step 4+5: Get per-file results and download transcripts ─────
+        await ctx.info("Job complete — fetching results…")
+        transcripts = await _fetch_file_results(sc.client, job_id, on_download=_announce)
 
-        # ── Step 5: Download transcripts ────────────────────────────────
-        transcripts: list[dict[str, Any]] = []
-        for file_entry in files_payload.get("data", []):
-            transcript_url = file_entry.get("transcript_url")
-            if not transcript_url:
-                transcripts.append({
-                    "file": file_entry.get("original_path"),
-                    "status": file_entry.get("status"),
-                    "error": file_entry.get("error_message"),
-                })
-                continue
-
-            await ctx.info(f"Downloading transcript for {file_entry.get('original_path')}…")
-            transcript_data = await sc.client.get_presigned(transcript_url)
-            transcripts.append({
-                "file": file_entry.get("original_path"),
-                "file_id": file_entry.get("file_id"),
-                "status": "COMPLETED",
-                "language_code": transcript_data.get("language_code"),
-                "duration_seconds": transcript_data.get("duration_seconds"),
-                "full_transcript": transcript_data.get("full_transcript", ""),
-                "segments": transcript_data.get("segments"),
-            })
-
-        return {
+        result: dict[str, Any] = {
             "job_id": job_id,
             "status": final_status,
             "progress": progress,
             "transcripts": transcripts,
         }
+        if (summary := _failure_summary(transcripts)) is not None:
+            result["warning"] = summary
+        return result
 
     @mcp.tool(
         name="gnani_stt_batch_list_jobs",
@@ -385,10 +509,12 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(
         name="gnani_stt_batch_get_transcripts",
         description=(
-            "Download the transcripts for a completed Batch STT job.\n\n"
-            "Call this after ``gnani_stt_batch_status`` returns "
-            "``COMPLETED`` or ``PARTIAL_FAILURE``. "
-            "Returns ``full_transcript`` and per-segment data for each file.\n\n"
+            "Download the transcripts for a finished Batch STT job.\n\n"
+            "Call this after ``gnani_stt_batch_status`` returns a terminal status "
+            "(``COMPLETED``, ``PARTIAL_FAILURE``, ``FAILED``, ...). "
+            "Returns ``full_transcript`` and per-segment data for each file that succeeded. "
+            "Files that did not succeed are listed too, with ``status`` and an ``error`` "
+            "explaining why (e.g. no speech detected), and a ``warning`` summarises them.\n\n"
             "``transcript_url`` links expire after 1 hour — if download fails, "
             "call this tool again to get fresh URLs."
         ),
@@ -410,39 +536,17 @@ def register(mcp: FastMCP) -> None:
                            "Poll with gnani_stt_batch_status and retry when COMPLETED.",
             }
 
-        files_payload = await sc.client.get_json(
-            f"{_BASE}/{job_id}/files",
-            params={"status": "COMPLETED", "limit": 100},
-        )
+        transcripts = await _fetch_file_results(sc.client, job_id)
 
-        transcripts: list[dict[str, Any]] = []
-        for file_entry in files_payload.get("data", []):
-            transcript_url = file_entry.get("transcript_url")
-            if not transcript_url:
-                transcripts.append({
-                    "file": file_entry.get("original_path"),
-                    "status": file_entry.get("status"),
-                    "error": file_entry.get("error_message"),
-                })
-                continue
-
-            transcript_data = await sc.client.get_presigned(transcript_url)
-            transcripts.append({
-                "file": file_entry.get("original_path"),
-                "file_id": file_entry.get("file_id"),
-                "status": "COMPLETED",
-                "language_code": transcript_data.get("language_code"),
-                "duration_seconds": transcript_data.get("duration_seconds"),
-                "full_transcript": transcript_data.get("full_transcript", ""),
-                "segments": transcript_data.get("segments"),
-            })
-
-        return {
+        result: dict[str, Any] = {
             "job_id": job_id,
             "status": status,
             "progress": status_payload.get("progress"),
             "transcripts": transcripts,
         }
+        if (summary := _failure_summary(transcripts)) is not None:
+            result["warning"] = summary
+        return result
 
     @mcp.tool(
         name="gnani_stt_batch_cancel",

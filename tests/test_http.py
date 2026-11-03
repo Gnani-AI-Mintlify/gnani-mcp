@@ -148,3 +148,128 @@ class TestRateLimitRetry:
             await c.get_json("/x")
         assert route.call_count == 1
         await c.aclose()
+
+
+# ── Error-message parsing: one test per envelope the live API really sends ──
+
+from gnani_mcp.exceptions import GnaniConnectionError  # noqa: E402
+from gnani_mcp.http import parse_error_response  # noqa: E402
+
+
+def _resp(status: int, *, json_body=None, text: str | None = None) -> httpx.Response:
+    if json_body is not None:
+        return httpx.Response(status, json=json_body)
+    return httpx.Response(status, text=text or "")
+
+
+@pytest.mark.parametrize(
+    ("resp", "message", "code", "etype"),
+    [
+        # shape A: STT / TTS envelope
+        (_resp(400, json_body={"success": False, "error": {"type": "INVALID_REQUEST_ERROR", "message": "bad"}}),
+         "bad", None, "INVALID_REQUEST_ERROR"),
+        # shape C: TTS / voice clone ("success":false + message) — the real sample_rate rejection
+        (_resp(400, json_body={"success": False, "status_code": 400,
+                               "message": "Invalid request: Value error, sample_rate must be one of [8000, 16000], got 12345 at body -> audio_config -> sample_rate"}),
+         "Invalid request: Value error, sample_rate must be one of [8000, 16000], got 12345 at body -> audio_config -> sample_rate", None, "API_ERROR"),
+        # shape D: batch API, "error" is a string code
+        (_resp(404, json_body={"error": "JOB_NOT_FOUND", "message": "Job 0000 not found"}),
+         "Job 0000 not found", "JOB_NOT_FOUND", "API_ERROR"),
+        (_resp(409, json_body={"error": "JOB_ALREADY_COMPLETED", "message": "Job has already finished with status 'COMPLETED'"}),
+         "Job has already finished with status 'COMPLETED'", "JOB_ALREADY_COMPLETED", "API_ERROR"),
+        # shape B: voice clone detail dict, code maps onto a typed error
+        (_resp(429, json_body={"detail": {"error_code": "RATE_LIMITED", "message": "Rate limit exceeded", "status_code": 429}}),
+         "Rate limit exceeded", "RATE_LIMITED", "RATE_LIMIT_ERROR"),
+        # FastAPI validation error (HTTP 422): location is shown, the 'path'/'body' prefix is dropped
+        (_resp(422, json_body={"detail": [{"type": "uuid_parsing", "loc": ["path", "job_id"],
+                                           "msg": "Input should be a valid UUID, invalid character: found `n` at 0", "input": "nope"}]}),
+         "job_id: Input should be a valid UUID, invalid character: found `n` at 0", None, "API_ERROR"),
+        (_resp(422, json_body={"detail": [{"loc": ["body", "audio_config", "sample_rate"], "msg": "bad"},
+                                          {"loc": ["body", "text"], "msg": "required"}]}),
+         "audio_config.sample_rate: bad; text: required", None, "API_ERROR"),
+        (_resp(400, json_body={"detail": "plain detail"}), "plain detail", None, "API_ERROR"),
+        # plain text, empty body, non-object JSON: never lose the text
+        (_resp(400, text="Unsupported audio format. Supported formats: wav, mp3"),
+         "Unsupported audio format. Supported formats: wav, mp3", None, "API_ERROR"),
+        (_resp(500, text="Internal server error occurred. Please try again later."),
+         "Internal server error occurred. Please try again later.", None, "API_ERROR"),
+        (_resp(404, text=""), "Not Found", None, "API_ERROR"),
+        (_resp(500, json_body=["weird"]), '["weird"]', None, "API_ERROR"),
+        # unknown JSON object: raw text rather than a guess
+        (_resp(500, json_body={"foo": "bar"}), '{"foo":"bar"}', None, "API_ERROR"),
+    ],
+)
+def test_parse_error_response(resp: httpx.Response, message: str, code: str | None, etype: str) -> None:
+    assert parse_error_response(resp) == (message, code, etype)
+
+
+def test_error_string_includes_api_code_but_not_the_json_wrapper(client: GnaniClient) -> None:
+    resp = _resp(404, json_body={"error": "JOB_NOT_FOUND", "message": "Job 0000 not found"})
+    with pytest.raises(GnaniAPIError) as info:
+        client._raise_from_response(resp)
+    assert str(info.value) == "[HTTP 404 JOB_NOT_FOUND] Job 0000 not found"
+    assert info.value.code == "JOB_NOT_FOUND" and info.value.status_code == 404
+
+
+def test_error_string_without_code(client: GnaniClient) -> None:
+    resp = _resp(400, json_body={"success": False, "message": "Text is required", "status_code": 400})
+    with pytest.raises(InvalidRequestError) as info:
+        client._raise_from_response(resp)
+    assert str(info.value) == "[HTTP 400] Text is required"
+
+
+# ── Network failures: clear, and honest about whether a retry is safe ───────
+
+
+class TestConnectionErrors:
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_read_timeout_on_post_warns_it_may_have_been_processed(self, client: GnaniClient) -> None:
+        respx.post(f"{BASE_URL}/stt/v3/batch/jobs").mock(side_effect=httpx.ReadTimeout(""))  # httpx's text is empty
+        with pytest.raises(GnaniConnectionError) as info:
+            await client.post_json("/stt/v3/batch/jobs", json_body={})
+        text = str(info.value)
+        assert "POST /stt/v3/batch/jobs" in text and "did not respond within 120s" in text
+        assert "may already have received and processed" in text
+        assert info.value.request_not_sent is False
+        assert info.value.status_code is None
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_read_timeout_on_get_is_safe_to_retry(self, client: GnaniClient) -> None:
+        respx.get(f"{BASE_URL}/x").mock(side_effect=httpx.ReadTimeout(""))
+        with pytest.raises(GnaniConnectionError, match="read-only request, so it is safe to retry"):
+            await client.get_json("/x")
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_connect_error_means_request_not_sent(self, client: GnaniClient) -> None:
+        respx.post(f"{BASE_URL}/x").mock(side_effect=httpx.ConnectError("All connection attempts failed"))
+        with pytest.raises(GnaniConnectionError) as info:
+            await client.post_json("/x", json_body={})
+        assert info.value.request_not_sent is True
+        assert "could not connect" in str(info.value) and "safe to retry" in str(info.value)
+        assert "All connection attempts failed" in str(info.value)
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_dropped_connection(self, client: GnaniClient) -> None:
+        respx.post(f"{BASE_URL}/x").mock(side_effect=httpx.RemoteProtocolError("Server disconnected without sending a response."))
+        with pytest.raises(GnaniConnectionError, match="closed the connection without a response"):
+            await client.post_json("/x", json_body={})
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_network_errors_are_not_retried(self, client: GnaniClient) -> None:
+        route = respx.post(f"{BASE_URL}/x").mock(side_effect=httpx.ReadTimeout(""))
+        with pytest.raises(GnaniConnectionError):
+            await client.post_json("/x", json_body={})
+        assert route.call_count == 1
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_presigned_download_failure_does_not_leak_the_signed_url(self, client: GnaniClient) -> None:
+        respx.get("https://s3.example/t.json").mock(side_effect=httpx.ReadTimeout(""))
+        with pytest.raises(GnaniConnectionError) as info:
+            await client.get_presigned("https://s3.example/t.json?X-Amz-Signature=SECRET")
+        assert "transcript download" in str(info.value) and "SECRET" not in str(info.value)

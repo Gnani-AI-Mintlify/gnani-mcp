@@ -15,6 +15,8 @@ from gnani_mcp.tools._common import (
     AudioEncoding,
     MP3Bitrate,
     TtsLanguageCode,
+    classify_output,
+    resolve_sample_rate,
     ready_ctx,
 )
 from gnani_mcp.voices import (
@@ -142,7 +144,7 @@ def register(mcp: FastMCP) -> None:
             default=_DEFAULT_CONTAINER,
             description=(
                 "Output audio container. Options: wav, mp3, ogg, raw, mulaw, alaw. "
-                "Use 'mulaw' or 'alaw' for telephony (forces 8000 Hz). "
+                "Use 'mulaw' or 'alaw' for telephony (always 8000 Hz, regardless of sample_rate). "
                 "Use 'ogg' for OGG Opus."
             ),
         ),
@@ -150,7 +152,8 @@ def register(mcp: FastMCP) -> None:
             default=_DEFAULT_ENCODING,
             description=(
                 "Audio encoding. Options: linear_pcm, pcm_s16le, pcm_mulaw, pcm_alaw, oggopus. "
-                "Not required when container=mp3."
+                "Not required when container=mp3. pcm_mulaw / pcm_alaw are G.711 telephony "
+                "encodings: the output is 8000 Hz whatever the container or sample_rate."
             ),
         ),
         bitrate: MP3Bitrate | None = Field(
@@ -184,11 +187,15 @@ def register(mcp: FastMCP) -> None:
 
         audio_bytes = await sc.client.post_json_binary(_TTS_PATH, json_body=json_body)
 
-        out_path = sc.audio_sink.save(
-            audio_bytes,
-            extension=container if container not in ("mulaw", "alaw", "raw") else "raw",
-            stem="tts",
-        )
+        actual_rate, rate_warning = resolve_sample_rate(audio_bytes, sample_rate, container, encoding)
+        if rate_warning:
+            warnings.append(rate_warning)
+
+        fmt = classify_output(audio_bytes, container, encoding)
+        if fmt.warning:
+            warnings.append(fmt.warning)
+
+        out_path = sc.audio_sink.save(audio_bytes, extension=fmt.extension, stem="tts")
 
         result: dict[str, Any] = {
             "audio_file": str(out_path),
@@ -196,8 +203,9 @@ def register(mcp: FastMCP) -> None:
             "model": model,
             "voice": canonical_voice,
             "language": language,
-            "container": container,
-            "sample_rate": sample_rate,
+            "container": fmt.container,
+            "encoding": fmt.encoding,
+            "sample_rate": actual_rate,
         }
         if warnings:
             result["warnings"] = warnings

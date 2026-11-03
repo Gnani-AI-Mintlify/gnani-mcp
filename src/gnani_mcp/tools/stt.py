@@ -22,6 +22,7 @@ from gnani_mcp.tools._common import (
     json_field,
     normalize_stt_language,
     ready_ctx,
+    require_upload_filename,
     resolve_file_input,
     validate_stt_format,
 )
@@ -78,18 +79,22 @@ def register(mcp: FastMCP) -> None:
         ),
         audio_base64: str | None = Field(
             default=None,
-            description="Base64-encoded audio data. Provide ``filename`` to preserve extension.",
+            description="Base64-encoded audio data. Requires ``filename`` (with extension).",
         ),
         audio_url: str | None = Field(
             default=None,
-            description="HTTP/HTTPS URL of the audio file. Provide ``filename`` to preserve extension.",
+            description=(
+                "HTTP/HTTPS URL that points directly at the audio file. "
+                "Requires ``filename`` (with extension)."
+            ),
         ),
         filename: str | None = Field(
             default=None,
             description=(
-                "Filename including extension (e.g. 'recording.wav'). "
-                "Required when using ``audio_base64`` or ``audio_url`` so the MIME type "
-                "can be determined correctly."
+                "File name including extension (e.g. 'recording.wav'). REQUIRED with "
+                "``audio_base64`` or ``audio_url`` — the API chooses its decoder from the "
+                "extension and rejects uploads without one. Not inferred from the URL. "
+                "Supported: wav, mp3, ogg, flac, m4a, aac. Ignored with ``audio_path``."
             ),
         ),
         model: SttModel = Field(
@@ -173,6 +178,9 @@ def register(mcp: FastMCP) -> None:
             speaker_names=speaker_names,
         )
 
+        require_upload_filename(
+            file_path=audio_path, file_base64=audio_base64, file_url=audio_url, filename=filename
+        )
         async with resolve_file_input(
             file_path=audio_path,
             file_base64=audio_base64,
