@@ -337,6 +337,7 @@ async def resolve_file_input(
                 ) from exc
         yield tmp_path
     finally:
+        tmp.close()  # no-op if already closed; Windows can't delete a file that is still open
         tmp_path.unlink(missing_ok=True)
 
 

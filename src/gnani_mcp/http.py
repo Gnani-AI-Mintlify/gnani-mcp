@@ -27,6 +27,11 @@ from gnani_mcp.exceptions import (
 
 logger = logging.getLogger("gnani_mcp.http")
 
+# ``X-Source`` tells the backend which channel is calling, so usage and billing are
+# attributed to this MCP server. Other channels send "playground", "livekit", "pipecat";
+# never use "batch" — the STT service treats it as internal and skips billing.
+SOURCE = "mcp"
+
 # Generous but bounded timeouts: connect quickly, give reads up to 2 min.
 _TIMEOUT = httpx.Timeout(connect=10.0, read=120.0, write=30.0, pool=5.0)
 
@@ -212,7 +217,7 @@ class GnaniClient:
                 "Set it via the GNANI_API_KEY environment variable "
                 "or in ~/.gnani/credentials (api_key = sk_...)."
             )
-        return {"X-API-Key-ID": self._api_key}
+        return {"X-API-Key-ID": self._api_key, "X-Source": SOURCE}
 
     # ------------------------------------------------------------------
     # Request helpers

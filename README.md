@@ -10,7 +10,7 @@ Cross-platform Python package: **macOS, Windows, and Linux** (Python 3.10+).
 
 ### 1. Get your API key
 
-Sign up or log in at **dashboard.gnani.ai** and copy your API key.
+Sign up or log in at **app.gnani.ai** and copy your API key.
 
 ### 2. Add to your MCP client
 
@@ -52,10 +52,26 @@ If you have installed via `pip install gnani-mcp`, use the console script direct
 | Client | Config path |
 |--------|-------------|
 | **Cursor** | `~/.cursor/mcp.json` (macOS/Linux) · `%USERPROFILE%\.cursor\mcp.json` (Windows) |
-| **Claude Desktop** | `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) |
-| **Claude Code** | `claude mcp add gnani -- uvx gnani-mcp` (then set `GNANI_API_KEY` env var) |
-| **Windsurf** | Cascade settings → MCP servers |
-| **Zed** | `settings.json` → `context_servers` |
+| **Claude Desktop** | `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) · `%APPDATA%\Claude\claude_desktop_config.json` (Windows) |
+| **Claude Code** | `claude mcp add gnani --env GNANI_API_KEY=your-api-key -- uvx gnani-mcp` |
+| **Windsurf** | Cascade panel → MCPs → *Open MCP config file* (`~/.config/devin/mcp_config.json` on macOS/Linux, `%APPDATA%\devin\mcp_config.json` on Windows; older installs use `~/.codeium/windsurf/mcp_config.json`). Uses the same `mcpServers` JSON as above. |
+| **Zed** | `settings.json` (`zed: open settings file`) → `context_servers`, see below. Or Settings → AI → MCP Servers → *Add Server*. |
+
+**Zed** uses a different key (`context_servers`) than the JSON above:
+
+```json
+{
+  "context_servers": {
+    "gnani": {
+      "command": "uvx",
+      "args": ["gnani-mcp"],
+      "env": {
+        "GNANI_API_KEY": "your-api-key"
+      }
+    }
+  }
+}
+```
 
 ### Alternative: credentials file
 
@@ -118,7 +134,16 @@ Both new models are **opt-in** — omit `model` and behaviour is unchanged (Pris
 | `GNANI_API_KEY` | — | **Required.** Your Gnani API key. |
 | `GNANI_API_BASE_URL` | `https://api.vachana.ai` | Override for testing / staging. |
 | `GNANI_MCP_BASE_PATH` | `~/Desktop` | Directory where audio output files are saved. |
-| `GNANI_AUDIO_OUTPUT_MODE` | `files` | `files` · `resources` · `both` |
+
+### Running over HTTP
+
+By default the server speaks MCP over stdio. To serve it over HTTP instead:
+
+```bash
+gnani-mcp --transport http --host 127.0.0.1 --port 8000 --path /mcp
+```
+
+`--transport` accepts `stdio` (default), `http`, `sse`, or `streamable-http`.
 
 ---
 
@@ -162,26 +187,14 @@ print(audio_result["audio_file"])  # path to saved WAV file
 
 ---
 
-## Development
+## Print client config
 
 ```bash
-# Clone and set up
-git clone https://github.com/Gnani-AI-Mintlify/gnani-mcp.git
-cd gnani-mcp
-
-uv venv && source .venv/bin/activate
-uv pip install -e ".[dev]"
-
-# Run tests
-pytest -q
-
-# Run the MCP server locally
-gnani-mcp
-
-# Print client config JSON
 gnani-mcp --print
 gnani-mcp --api-key=your-key --print
 ```
+
+This prints the MCP client config JSON for your machine (using `uvx` if it's installed).
 
 ---
 

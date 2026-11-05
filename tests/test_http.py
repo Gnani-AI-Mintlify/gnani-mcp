@@ -38,6 +38,19 @@ class TestAuthHeader:
         headers = c._auth_headers()
         assert headers["X-API-Key-ID"] == "sk_abc"
 
+    def test_source_header_identifies_mcp(self) -> None:
+        c = GnaniClient(base_url=BASE_URL, api_key="sk_abc")
+        assert c._auth_headers()["X-Source"] == "mcp"
+
+    @respx.mock
+    async def test_source_header_sent_on_the_wire(self, client: GnaniClient) -> None:
+        route = respx.post(f"{BASE_URL}/stt/v3").mock(
+            return_value=httpx.Response(200, json={"success": True})
+        )
+        await client.post_multipart("/stt/v3", data={"language_code": "hi-IN"}, files={"audio_file": ("a.wav", b"x", "audio/wav")})
+        assert route.calls.last.request.headers["x-source"] == "mcp"
+        assert route.calls.last.request.headers["x-api-key-id"] == "sk_test"
+
 
 class TestErrorMapping:
     @pytest.mark.parametrize(
