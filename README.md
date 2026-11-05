@@ -132,7 +132,6 @@ Both new models are **opt-in** — omit `model` and behaviour is unchanged (Pris
 | Env var | Default | Description |
 |---------|---------|-------------|
 | `GNANI_API_KEY` | — | **Required.** Your Gnani API key. |
-| `GNANI_API_BASE_URL` | `https://api.vachana.ai` | Override for testing / staging. |
 | `GNANI_MCP_BASE_PATH` | `~/Desktop` | Directory where audio output files are saved. |
 
 ### Running over HTTP
