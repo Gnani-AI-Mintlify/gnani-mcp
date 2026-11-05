@@ -5,7 +5,7 @@ Thank you for your interest in contributing to gnani-mcp!
 ### Setting up the development environment
 
 ```bash
-git clone https://github.com/gnani-ai/gnani-mcp.git
+git clone https://github.com/Gnani-AI-Mintlify/gnani-mcp.git
 cd gnani-mcp
 
 uv venv && source .venv/bin/activate

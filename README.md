@@ -166,7 +166,7 @@ print(audio_result["audio_file"])  # path to saved WAV file
 
 ```bash
 # Clone and set up
-git clone https://github.com/gnani-ai/gnani-mcp.git
+git clone https://github.com/Gnani-AI-Mintlify/gnani-mcp.git
 cd gnani-mcp
 
 uv venv && source .venv/bin/activate

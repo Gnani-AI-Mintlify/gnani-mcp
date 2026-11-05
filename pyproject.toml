@@ -51,8 +51,8 @@ gnani-mcp = "gnani_mcp.server:main"
 [project.urls]
 Homepage      = "https://gnani.ai"
 Documentation = "https://docs.gnani.ai"
-Repository    = "https://github.com/gnani-ai/gnani-mcp"
-Issues        = "https://github.com/gnani-ai/gnani-mcp/issues"
+Repository    = "https://github.com/Gnani-AI-Mintlify/gnani-mcp"
+Issues        = "https://github.com/Gnani-AI-Mintlify/gnani-mcp/issues"
 
 # ---------------------------------------------------------------------------
 # Build
