@@ -1,8 +1,8 @@
 # gnani-mcp
 
-Official Gnani AI MCP server. Exposes Gnani Speech-to-Text (Prisma v2.5), Text-to-Speech (Timbre v2.5), and Voice Clone APIs as first-class MCP tools, so any MCP-aware client (Claude Desktop, Claude Code, Cursor, Windsurf, Zed) can call them with zero boilerplate.
+Official Gnani AI MCP server. Exposes Gnani Speech-to-Text (Prisma v2.5 / v3.0), Text-to-Speech (Timbre v2.5 / v3.0), and Voice Clone APIs as first-class MCP tools, so any MCP-aware client (Claude Desktop, Claude Code, Cursor, Windsurf, Zed) can call them with zero boilerplate.
 
-Cross-platform Python package: **macOS, Windows, and Linux** (Python 3.11+).
+Cross-platform Python package: **macOS, Windows, and Linux** (Python 3.10+).
 
 ---
 
@@ -85,11 +85,29 @@ pip install gnani-mcp
 
 | Tool | What it does |
 |------|-------------|
-| `gnani_stt_transcribe` | Transcribe audio (≤ 60 s) in 10 Indian languages — WAV, MP3, OGG, FLAC, AAC, M4A |
-| `gnani_tts_synthesize` | Synthesize speech from text — 42 voices, 10 languages + Hinglish |
-| `gnani_tts_list_voices` | Browse the full voice catalog with language, gender, persona, description |
+| `gnani_stt_transcribe` | Transcribe a short clip (≤ 30 s) in 10 Indian languages — WAV, MP3, OGG, FLAC, AAC, M4A. `model`: `prisma-v2.5` (default) or `prisma-v3.0` |
+| `gnani_stt_batch_transcribe` | Transcribe long (up to 4 h) or remote audio: create → start → poll → fetch, in one call. Supports both models |
+| `gnani_stt_batch_list_jobs` | List Batch STT jobs (status filter + cursor pagination) |
+| `gnani_stt_batch_status` / `_get_transcripts` / `_cancel` | Check, download, or cancel an existing Batch job |
+| `gnani_tts_synthesize` | Synthesize speech. `model`: `timbre-v2.5` (default, 42 voices) or `timbre-v3.0` (13 voices, all 10 languages, inline audio tags) |
+| `gnani_tts_list_voices` | Browse the voice catalog for either TTS model (language, gender, persona, description) |
 | `gnani_vc_generate_embedding` | Extract a speaker embedding from a reference audio clip (step 1 of voice cloning) |
 | `gnani_vc_synthesize` | Synthesize speech in a cloned voice using a speaker embedding (step 2) |
+
+### Choosing a model
+
+Both new models are **opt-in** — omit `model` and behaviour is unchanged (Prisma v2.5 / Timbre v2.5).
+
+**Prisma v3.0** (`model="prisma-v3.0"`) on `gnani_stt_transcribe` and `gnani_stt_batch_transcribe`:
+
+- `language_code="indic-auto"` lets the model identify the language, or pass 1–4 comma-separated codes (`"hi-IN,en-IN"`) as hints. REST results include `detected_language_code`.
+- `format` adds `codemix` (English words stay Latin) and, on REST only, `transliterate` (Latin-letter output). When `format` is omitted v3.0 picks a style per request (digits for a single `hi-IN`/`en-IN`) — pass `format` explicitly to keep v2.5-style output.
+- Context hints: `keyterms`, `topic`, `speaker_names`, and (REST only) `previous_text`. On Batch only one of `keyterms`, `topic`, `topic + keyterms`, or `speaker_names` is accepted, and `topic` must be 30–1,600 characters.
+
+**Timbre v3.0** (`model="timbre-v3.0"`) on `gnani_tts_synthesize`:
+
+- Voices are **not** shared between models: Shivani, Lakshmi, Kalpana, Chetana, Vasudha, Riyaa, Tarika (F); Avinash, Shubham, Prakash, Devansh, Yashraj, Harshad (M). Every voice speaks all 10 languages.
+- Inline audio tags in `text`: `<laugh>`, `<giggle>`, `<sigh>`, `<exhales>`, `<sniffles>`, `<yawns>`, `<coughs>`, `<clears throat>`, `<whispers>`, `<shouting>`, `<excited>`, `<slow>`, `<pauses>` (silence, never spoken). A tag applies until the next tag; tags are billed as characters. With v2.5 they are stripped, and the tool returns a warning.
 
 ---
 
@@ -106,7 +124,7 @@ pip install gnani-mcp
 
 ## Supported Languages
 
-### STT (Prisma v2.5)
+### STT (Prisma v2.5 / v3.0)
 
 | Language | Code |
 |----------|------|
@@ -121,9 +139,9 @@ pip install gnani-mcp
 | Tamil | `ta-IN` |
 | Telugu | `te-IN` |
 
-### TTS (Timbre v2.5) — also supports Hinglish (`hi-en`) and `auto`
+### TTS (Timbre v2.5 / v3.0) — also supports Hinglish (`hi-en`) and `auto`
 
-42 voices across all 10 Indian languages plus Hinglish. Use `gnani_tts_list_voices` to browse by language and gender.
+Timbre v2.5: 42 voices across all 10 Indian languages plus Hinglish, one preferred language each. Timbre v3.0: 13 voices that each speak all 10 languages. Use `gnani_tts_list_voices` (with `model`) to browse.
 
 ---
 
@@ -148,7 +166,7 @@ print(audio_result["audio_file"])  # path to saved WAV file
 
 ```bash
 # Clone and set up
-git clone https://github.com/gnani-ai/gnani-mcp.git
+git clone https://github.com/Gnani-AI-Mintlify/gnani-mcp.git
 cd gnani-mcp
 
 uv venv && source .venv/bin/activate

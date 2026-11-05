@@ -225,3 +225,6 @@ gnani_*.raw
 
 # Gnani credentials
 .gnani/
+
+# Local audio output from manual MCP testing
+.audio-out/

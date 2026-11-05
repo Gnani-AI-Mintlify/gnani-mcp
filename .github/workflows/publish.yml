@@ -1,0 +1,90 @@
+name: Publish to PyPI
+
+# Real release:  git tag v0.2.0 && git push origin v0.2.0
+# Rehearsal:     Actions tab -> "Publish to PyPI" -> Run workflow (uploads to TestPyPI only)
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Never upload code that fails the normal checks.
+  checks:
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    name: Build distribution
+    needs: checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Tag must match the version in pyproject.toml
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          python - <<'PY'
+          import os, sys, tomllib
+          with open("pyproject.toml", "rb") as f:
+              version = tomllib.load(f)["project"]["version"]
+          tag = os.environ["GITHUB_REF_NAME"]
+          if tag != f"v{version}":
+              sys.exit(f"Tag {tag!r} does not match pyproject.toml version {version!r} (expected v{version}).")
+          print(f"OK: {tag} == v{version}")
+          PY
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install build twine
+          python -m build
+          python -m twine check --strict dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish-testpypi:
+    name: Upload to TestPyPI (manual rehearsal)
+    if: github.event_name == 'workflow_dispatch'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/gnani-mcp/
+    permissions:
+      id-token: write # Trusted Publishing: lets PyPI verify this run's identity
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  publish-pypi:
+    name: Upload to PyPI
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/gnani-mcp/
+    permissions:
+      id-token: write # Trusted Publishing: lets PyPI verify this run's identity
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1

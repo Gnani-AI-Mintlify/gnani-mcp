@@ -15,7 +15,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from gnani_mcp.audio import AudioSink
-from gnani_mcp.config import Config
 from gnani_mcp.http import GnaniClient
 from gnani_mcp.tools.tts import _VOICE_CATALOG
 
@@ -200,18 +199,17 @@ async def test_vc(client: GnaniClient, sink: AudioSink, reference_audio: Path) -
 async def test_batch_stt(client: GnaniClient) -> None:
     section("5 · gnani_stt_batch_transcribe (Batch STT)")
     # Use a short public audio file so the job completes quickly.
-    PUBLIC_URL = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"
-    # Use a real speech sample instead — point to one of our generated TTS files... 
-    # but those are local. We'll use a public Hindi speech sample.
-    PUBLIC_SPEECH_URL = (
+    # Use a real public speech sample (generated TTS files are local only).
+    public_speech_url = (
         "https://upload.wikimedia.org/wikipedia/commons/thumb/2/21/"
         "Simple_English.ogg/220px-Simple_English.ogg"
     )
-    info(f"Submitting public URL job: {PUBLIC_SPEECH_URL}")
+    info(f"Submitting public URL job: {public_speech_url}")
     info("Language: en-IN | No diarization")
 
-    from gnani_mcp.tools.stt_batch import _BASE, _POLL_INTERVAL_SECONDS, _TERMINAL_STATUSES
     import asyncio as _asyncio
+
+    from gnani_mcp.tools.stt_batch import _BASE, _TERMINAL_STATUSES
 
     # Step 1: Create
     body = {
@@ -226,7 +224,7 @@ async def test_batch_stt(client: GnaniClient) -> None:
         "source": {
             "type": "cloud_storage",
             "auth": {"mode": "public"},
-            "paths": [PUBLIC_SPEECH_URL],
+            "paths": [public_speech_url],
         },
     }
     create = await client.post_json(_BASE, json_body=body)
@@ -276,9 +274,9 @@ async def main() -> None:
         print(f"  {FAIL}  GNANI_API_KEY is not set.")
         sys.exit(1)
 
-    print(f"\n\033[1mGnani MCP — Integration Test\033[0m")
+    print("\n\033[1mGnani MCP — Integration Test\033[0m")
     print(f"  API key  : {api_key[:16]}…")
-    print(f"  Base URL : https://api.vachana.ai")
+    print("  Base URL : https://api.vachana.ai")
     print(f"  Output   : {BASE_PATH}")
 
     client = GnaniClient(base_url="https://api.vachana.ai", api_key=api_key)

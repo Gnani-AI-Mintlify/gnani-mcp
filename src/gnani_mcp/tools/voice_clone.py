@@ -20,9 +20,11 @@ from gnani_mcp.tools._common import (
     AudioContainer,
     AudioEncoding,
     MP3Bitrate,
+    classify_output,
     guess_audio_mime,
     ready_ctx,
     resolve_file_input,
+    resolve_sample_rate,
 )
 
 _EMBEDDINGS_PATH = "/api/v1/tts/voice-clone/embeddings"
@@ -126,7 +128,10 @@ def register(mcp: FastMCP) -> None:
         ),
         container: AudioContainer = Field(
             default=_DEFAULT_CONTAINER,
-            description="Output audio container: wav, mp3, ogg, raw, mulaw, alaw.",
+            description=(
+                "Output audio container: wav, mp3, ogg, raw, mulaw, alaw. "
+                "mulaw / alaw (and encoding pcm_mulaw / pcm_alaw) are always 8000 Hz."
+            ),
         ),
         encoding: AudioEncoding = Field(
             default=_DEFAULT_ENCODING,
@@ -158,15 +163,17 @@ def register(mcp: FastMCP) -> None:
 
         audio_bytes = await sc.client.post_json_binary(_VC_INFERENCE_PATH, json_body=json_body)
 
-        out_path = sc.audio_sink.save(
-            audio_bytes,
-            extension=container if container not in ("mulaw", "alaw", "raw") else "raw",
-            stem="vc",
-        )
+        fmt = classify_output(audio_bytes, container, encoding)
+        out_path = sc.audio_sink.save(audio_bytes, extension=fmt.extension, stem="vc")
 
-        return {
+        actual_rate, rate_warning = resolve_sample_rate(audio_bytes, sample_rate, container, encoding)
+        result: dict[str, Any] = {
             "audio_file": str(out_path),
             "size_bytes": len(audio_bytes),
-            "container": container,
-            "sample_rate": sample_rate,
+            "container": fmt.container,
+            "encoding": fmt.encoding,
+            "sample_rate": actual_rate,
         }
+        if warnings := [w for w in (rate_warning, fmt.warning) if w]:
+            result["warnings"] = warnings
+        return result

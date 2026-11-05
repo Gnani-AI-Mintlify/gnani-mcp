@@ -18,12 +18,25 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from fastmcp import Context, FastMCP
 from pydantic import Field
 
-from gnani_mcp.tools._common import SttLanguageCode, guess_audio_mime, ready_ctx, resolve_file_input
+from gnani_mcp.tools._common import (
+    DEFAULT_STT_MODEL,
+    SttModel,
+    build_v3_context,
+    guess_audio_mime,
+    normalize_stt_language,
+    ready_ctx,
+    redact_url,
+    resolve_file_input,
+    validate_stt_format,
+)
 
 logger = logging.getLogger("gnani_mcp.tools.stt_batch")
 
@@ -38,8 +51,143 @@ _TERMINAL_STATUSES = frozenset(
     {"COMPLETED", "PARTIAL_FAILURE", "FAILED", "START_FAILED", "CANCELLED"}
 )
 
-# Batch STT language codes (Gujarati and Punjabi NOT supported here).
-BatchLanguageCode = str  # up to 3 comma-separated BCP-47 codes, e.g. "hi-IN,en-IN"
+# Value sent as ``config.model`` for Prisma v2.5 jobs. (The docs also list
+# ``prisma-v2.5``; this is the value this server has always sent.)
+_BATCH_V25_MODEL = "gnani-prisma-v2.5"
+
+# Job statuses accepted by the list-jobs ``status`` filter.
+_JOB_STATUSES = (
+    "CREATED", "STARTING", "QUEUED", "IN_PROGRESS", "COMPLETED",
+    "PARTIAL_FAILURE", "FAILED", "START_FAILED", "CANCELLING", "CANCELLED",
+)
+
+
+# Per-file listing: page size and a hard cap on pages (guards against a server
+# that keeps returning ``has_more`` / a repeating cursor).
+_FILES_PAGE_SIZE = 100
+_MAX_FILE_PAGES = 100
+# How many failed files to spell out in a one-line summary.
+_MAX_FAILURES_IN_SUMMARY = 10
+
+
+async def _fetch_file_results(
+    client: Any,
+    job_id: str,
+    *,
+    on_download: Callable[[str], Awaitable[None]] | None = None,
+) -> list[dict[str, Any]]:
+    """Return one result per file of *job_id*, whatever its status.
+
+    Files with a ``transcript_url`` are downloaded and returned with their
+    transcript.  Every other file (FAILED, CANCELLED, ...) is returned with its
+    ``status`` and the API's ``error_message`` as ``error`` — there is nothing to
+    download for them.  The listing is paged with the server-provided cursor so
+    jobs with more than one page of files are not truncated.
+    """
+    results: list[dict[str, Any]] = []
+    cursor: str | None = None
+    seen_cursors: set[str] = set()
+
+    for _ in range(_MAX_FILE_PAGES):
+        params: dict[str, Any] = {"limit": _FILES_PAGE_SIZE}
+        if cursor:
+            params["cursor"] = cursor
+        payload = await client.get_json(f"{_BASE}/{job_id}/files", params=params)
+
+        for entry in payload.get("data") or []:
+            name = entry.get("original_path")
+            transcript_url = entry.get("transcript_url")
+            if not transcript_url:
+                status = entry.get("status")
+                error = entry.get("error_message")
+                if not error and status != "COMPLETED":
+                    error = f"File ended with status {status} (the API gave no error message)."
+                results.append({
+                    "file": name,
+                    "file_id": entry.get("file_id"),
+                    "status": status,
+                    "duration_seconds": entry.get("duration_seconds"),
+                    "error": error,
+                })
+                continue
+
+            if on_download is not None:
+                await on_download(name or "")
+            transcript_data = await client.get_presigned(transcript_url)
+            results.append({
+                "file": name,
+                "file_id": entry.get("file_id"),
+                "status": "COMPLETED",
+                "language_code": transcript_data.get("language_code"),
+                "duration_seconds": transcript_data.get("duration_seconds"),
+                "full_transcript": transcript_data.get("full_transcript", ""),
+                "segments": transcript_data.get("segments"),
+            })
+
+        pagination = payload.get("pagination") or {}
+        cursor = pagination.get("next_cursor")
+        if not pagination.get("has_more") or not cursor or cursor in seen_cursors:
+            break
+        seen_cursors.add(cursor)
+    else:
+        logger.warning("Stopped listing files of job %s after %d pages", job_id, _MAX_FILE_PAGES)
+
+    return results
+
+
+def _failure_summary(results: list[dict[str, Any]]) -> str | None:
+    """One-line description of the files that did not produce a transcript."""
+    failed = [r for r in results if r.get("status") != "COMPLETED"]
+    if not failed:
+        return None
+    parts = [
+        f"{r.get('file') or r.get('file_id')}: {r.get('error')}"
+        for r in failed[:_MAX_FAILURES_IN_SUMMARY]
+    ]
+    more = len(failed) - len(parts)
+    if more > 0:
+        parts.append(f"... and {more} more")
+    return f"{len(failed)} file(s) did not produce a transcript — " + "; ".join(parts)
+
+
+def _validate_audio_url(url: str) -> str:
+    """Return the cleaned ``audio_url``, or raise before any job is created.
+
+    The server accepts anything at job-creation time and only discovers a bad path
+    when the job is started, leaving a dead ``START_FAILED`` record behind.  Only
+    obviously unusable values are rejected here — empty, not a web link, or no host.
+    ``http`` and ``https`` are both allowed; whether the file is reachable is for
+    the server to decide (it fetches from its own network).
+    """
+    cleaned = url.strip()
+    example = "e.g. 'https://example.com/call.wav'"
+    if not cleaned:
+        raise ValueError(f"audio_url is empty. Provide a public link to the audio file, {example}.")
+    try:
+        parts = urlsplit(cleaned)
+        has_host = bool(parts.hostname)
+    except ValueError:
+        parts, has_host = None, False
+    if parts is None or parts.scheme.lower() not in ("http", "https") or not has_host:
+        shown = cleaned.split("?")[0][:80]  # never echo a signed query string
+        raise ValueError(
+            f"audio_url {shown!r} is not a valid web link. It must start with http:// or "
+            f"https:// and include a host, {example}."
+        )
+    return cleaned
+
+
+def _start_failed_message(reason: str | None, source: str, *, from_url: bool) -> str:
+    """Explain a ``START_FAILED`` job: keep the server's reason, add the input and a hint."""
+    base = (reason or "").strip() or "The job failed to start."
+    if from_url:
+        hint = (
+            "The server could not use that audio_url. It must be a public link (no login, "
+            "not expired) that points directly at an audio file."
+        )
+    else:
+        hint = "The server could not use the uploaded file."
+    return f"{base} Input: {source}. {hint}"
 
 
 def register(mcp: FastMCP) -> None:
@@ -49,32 +197,41 @@ def register(mcp: FastMCP) -> None:
         name="gnani_stt_batch_transcribe",
         description=(
             "Transcribe long audio files (up to 4 hours each) or multiple files "
-            "asynchronously using the Gnani Prisma v2.5 Batch STT API.\n\n"
+            "asynchronously using the Gnani Prisma Batch STT API.\n\n"
             "**This tool runs the full flow automatically:** "
             "create job → start → poll every 10 s → fetch transcripts → return results.\n\n"
             "**Two ways to provide audio:**\n"
             "• Local file — set ``audio_path`` (max 10 MB per file via direct upload)\n"
             "• Public URL — set ``audio_url`` (HTTPS link, no size cap, bounded by 4-hour limit)\n\n"
-            "**Supported languages (8):** bn-IN, en-IN, hi-IN, kn-IN, ml-IN, mr-IN, ta-IN, te-IN.\n"
-            "Gujarati (gu-IN) and Punjabi (pa-IN) are NOT supported in Batch — use "
-            "``gnani_stt_transcribe`` (REST) for those.\n\n"
-            "**Diarization:** set ``with_diarization=True`` + ``num_speakers=2`` to get "
-            "per-speaker segments in the transcript.\n\n"
+            "**Models:**\n"
+            "- ``prisma-v2.5`` (default) — pass one language, or up to 3 comma-separated codes "
+            "(e.g. ``'hi-IN,en-IN'``) and the API identifies the language per file.\n"
+            "- ``prisma-v3.0`` — identifies the language of each *segment* itself: pass "
+            "``'indic-auto'`` or 1–4 codes. Adds ``format`` (verbatim | transcribe | codemix) and "
+            "context hints ``keyterms`` / ``topic`` / ``speaker_names``. These are refused with "
+            "any other model, and only these combinations are accepted: keyterms, topic, "
+            "topic + keyterms, or speaker_names.\n\n"
+            "**Languages:** bn-IN, en-IN, gu-IN, hi-IN, kn-IN, ml-IN, mr-IN, pa-IN, ta-IN, te-IN "
+            "(per the Batch docs).\n\n"
+            "**Diarization:** set ``with_diarization=True`` to get per-speaker segments "
+            "(``num_speakers`` is an upper limit, 1–8). With prisma-v3.0 speaker labels are "
+            "produced either way; the flag only decides whether a diarization failure fails the file.\n\n"
             "**Denoising:** set ``with_denoise=True`` for noisy call-centre or field recordings. "
-            "Leave off for clean audio — it adds processing time without changing the transcript.\n\n"
-            "**Multi-language identification:** pass up to 3 comma-separated codes as "
-            "``language_code`` (e.g. ``'hi-IN,en-IN'``) and the API identifies the language "
-            "per file automatically."
+            "Leave off for clean audio — it adds processing time without changing the transcript."
         ),
     )
     async def gnani_stt_batch_transcribe(
         ctx: Context,
         language_code: str = Field(
             description=(
-                "BCP-47 language code. Supported: bn-IN, en-IN, hi-IN, kn-IN, ml-IN, "
-                "mr-IN, ta-IN, te-IN. Pass up to 3 comma-separated codes for automatic "
-                "language identification per file (e.g. 'hi-IN,en-IN')."
+                "prisma-v2.5: one code, or up to 3 comma-separated codes for per-file language "
+                "identification. prisma-v3.0: 'indic-auto' (or 'auto'), or 1–4 comma-separated "
+                "codes. Codes: bn-IN, en-IN, gu-IN, hi-IN, kn-IN, ml-IN, mr-IN, pa-IN, ta-IN, te-IN."
             ),
+        ),
+        model: SttModel = Field(
+            default=DEFAULT_STT_MODEL,
+            description="'prisma-v2.5' (default) or 'prisma-v3.0'.",
         ),
         audio_path: str | None = Field(
             default=None,
@@ -92,11 +249,13 @@ def register(mcp: FastMCP) -> None:
         ),
         with_diarization: bool = Field(
             default=False,
-            description="Enable speaker diarization (who said what). Requires num_speakers.",
+            description="Enable speaker diarization (who said what).",
         ),
         num_speakers: int | None = Field(
             default=None,
-            description="Number of speakers (max 2). Required when with_diarization=True.",
+            description="Most speakers to separate (1–8; API default 5). It is an upper limit, not a target.",
+            ge=1,
+            le=8,
         ),
         with_denoise: bool = Field(
             default=False,
@@ -108,6 +267,29 @@ def register(mcp: FastMCP) -> None:
         is_multi_channel: bool = Field(
             default=False,
             description="Set True only for true multi-channel audio files.",
+        ),
+        format: str | None = Field(
+            default=None,
+            description=(
+                "prisma-v3.0 only: 'verbatim' | 'transcribe' | 'codemix'. Omit to let the "
+                "model choose per segment (transcribe for hi-IN/en-IN only, else verbatim). "
+                "Not supported on Batch: 'transliterate'; ITN."
+            ),
+        ),
+        keyterms: list[str] | None = Field(
+            default=None,
+            description="prisma-v3.0 only. Words or short phrases to favour (up to 200).",
+        ),
+        topic: str | None = Field(
+            default=None,
+            description="prisma-v3.0 only. What the recordings are about, 30–1,600 characters.",
+        ),
+        speaker_names: list[str] | None = Field(
+            default=None,
+            description=(
+                "prisma-v3.0 only. 1–4 names that may be spoken. "
+                "Cannot be combined with keyterms/topic."
+            ),
         ),
         callback_url: str | None = Field(
             default=None,
@@ -123,17 +305,21 @@ def register(mcp: FastMCP) -> None:
             raise ValueError("Provide either audio_path (local file) or audio_url (public HTTPS URL).")
         if audio_path is not None and audio_url is not None:
             raise ValueError("Provide only one of audio_path or audio_url, not both.")
+        if audio_url is not None:
+            audio_url = _validate_audio_url(audio_url)
 
-        config: dict[str, Any] = {
-            "model": "gnani-prisma-v2.5",
-            "language_code": language_code,
-            "mode": "transcribe",
-            "with_diarization": with_diarization,
-            "is_multi_channel": is_multi_channel,
-            "with_denoise": with_denoise,
-        }
-        if with_diarization and num_speakers is not None:
-            config["num_speakers"] = num_speakers
+        config = _build_config(
+            model=model,
+            language_code=language_code,
+            fmt=format,
+            keyterms=keyterms,
+            topic=topic,
+            speaker_names=speaker_names,
+            with_diarization=with_diarization,
+            num_speakers=num_speakers,
+            is_multi_channel=is_multi_channel,
+            with_denoise=with_denoise,
+        )
 
         # ── Step 1: Create job ──────────────────────────────────────────
         await ctx.info("Creating batch STT job…")
@@ -141,10 +327,17 @@ def register(mcp: FastMCP) -> None:
         if audio_path is not None:
             # Multipart upload
             async with resolve_file_input(file_path=audio_path) as path:
+                if path.stat().st_size == 0:
+                    raise ValueError(
+                        f"audio_path {path.name!r} is empty (0 bytes); there is nothing to transcribe."
+                    )
                 with path.open("rb") as fh:
                     create_payload = await sc.client.post_multipart(
                         _BASE,
-                        data={"config": json.dumps(config), **({"callback_url": callback_url} if callback_url else {})},
+                        data={
+                            "config": json.dumps(config),
+                            **({"callback_url": callback_url} if callback_url else {}),
+                        },
                         files={"files": (path.name, fh, guess_audio_mime(path))},
                     )
         else:
@@ -165,7 +358,15 @@ def register(mcp: FastMCP) -> None:
         await ctx.info(f"Job created: {job_id} — starting transcription…")
 
         # ── Step 2: Start job ───────────────────────────────────────────
-        await sc.client.post_json(f"{_BASE}/{job_id}/start", json_body={})
+        try:
+            await sc.client.post_json(f"{_BASE}/{job_id}/start", json_body={})
+        except Exception:
+            # Don't leave a never-started job behind (it would sit in CREATED forever).
+            try:
+                await sc.client.post_json(f"{_BASE}/{job_id}/cancel", json_body={})
+            except Exception:  # noqa: BLE001 — best effort cleanup
+                logger.warning("Could not cancel job %s after failed start", job_id)
+            raise
         await ctx.info("Job started — polling for completion (every 10 s)…")
 
         # ── Step 3: Poll until terminal ─────────────────────────────────
@@ -201,56 +402,91 @@ def register(mcp: FastMCP) -> None:
         progress = status_payload.get("progress", {})
 
         if final_status == "START_FAILED":
+            source = redact_url(audio_url) if audio_url is not None else Path(audio_path or "").name
             return {
                 "job_id": job_id,
                 "status": final_status,
-                "error": status_payload.get("cancel_reason", "Job failed to start"),
+                "error": _start_failed_message(
+                    status_payload.get("cancel_reason"), source, from_url=audio_url is not None
+                ),
             }
 
+        async def _announce(name: str) -> None:
+            await ctx.info(f"Downloading transcript for {name}…")
+
         if final_status == "FAILED":
+            # Every file failed. The per-file ``error_message`` says why.
+            try:
+                failed_files = await _fetch_file_results(sc.client, job_id)
+            except Exception:  # noqa: BLE001 — still report the FAILED status
+                logger.warning("Could not list files of failed job %s", job_id, exc_info=True)
+                failed_files = []
             return {
                 "job_id": job_id,
                 "status": final_status,
                 "progress": progress,
-                "error": "All files failed. Check audio content — silence/tone-only audio is rejected.",
+                "error": _failure_summary(failed_files)
+                or "All files failed and the API returned no per-file error details. "
+                "Use gnani_stt_batch_status for the job state.",
+                "transcripts": failed_files,
             }
 
-        # ── Step 4: Get per-file results ────────────────────────────────
-        await ctx.info("Job complete — fetching transcript URLs…")
-        files_payload = await sc.client.get_json(
-            f"{_BASE}/{job_id}/files",
-            params={"status": "COMPLETED", "limit": 100},
-        )
+        # ── Step 4+5: Get per-file results and download transcripts ─────
+        await ctx.info("Job complete — fetching results…")
+        transcripts = await _fetch_file_results(sc.client, job_id, on_download=_announce)
 
-        # ── Step 5: Download transcripts ────────────────────────────────
-        transcripts: list[dict[str, Any]] = []
-        for file_entry in files_payload.get("data", []):
-            transcript_url = file_entry.get("transcript_url")
-            if not transcript_url:
-                transcripts.append({
-                    "file": file_entry.get("original_path"),
-                    "status": file_entry.get("status"),
-                    "error": file_entry.get("error_message"),
-                })
-                continue
-
-            await ctx.info(f"Downloading transcript for {file_entry.get('original_path')}…")
-            transcript_data = await sc.client.get_presigned(transcript_url)
-            transcripts.append({
-                "file": file_entry.get("original_path"),
-                "file_id": file_entry.get("file_id"),
-                "status": "COMPLETED",
-                "language_code": transcript_data.get("language_code"),
-                "duration_seconds": transcript_data.get("duration_seconds"),
-                "full_transcript": transcript_data.get("full_transcript", ""),
-                "segments": transcript_data.get("segments"),
-            })
-
-        return {
+        result: dict[str, Any] = {
             "job_id": job_id,
             "status": final_status,
             "progress": progress,
             "transcripts": transcripts,
+        }
+        if (summary := _failure_summary(transcripts)) is not None:
+            result["warning"] = summary
+        return result
+
+    @mcp.tool(
+        name="gnani_stt_batch_list_jobs",
+        description=(
+            "List Batch STT jobs for your organization, newest first, with optional status "
+            "filter and cursor pagination. Use it to find a ``job_id`` for "
+            "``gnani_stt_batch_status`` / ``gnani_stt_batch_get_transcripts`` / "
+            "``gnani_stt_batch_cancel`` — e.g. after a ``gnani_stt_batch_transcribe`` call timed out.\n\n"
+            "If ``pagination.has_more`` is true, pass ``pagination.next_cursor`` as ``cursor`` "
+            "to fetch the next page."
+        ),
+    )
+    async def gnani_stt_batch_list_jobs(
+        ctx: Context,
+        status: str | None = Field(
+            default=None,
+            description=(
+                "Only return jobs with this status: " + ", ".join(_JOB_STATUSES) + "."
+            ),
+        ),
+        limit: int = Field(default=20, ge=1, le=100, description="Page size (1–100)."),
+        cursor: str | None = Field(
+            default=None,
+            description="Pagination cursor from a previous response's pagination.next_cursor.",
+        ),
+    ) -> dict[str, Any]:
+        sc = await ready_ctx(ctx)
+
+        params: dict[str, Any] = {"limit": limit}
+        if status is not None:
+            normalized = status.strip().upper()
+            if normalized not in _JOB_STATUSES:
+                raise ValueError(
+                    f"Invalid status {status!r}. Allowed: {', '.join(_JOB_STATUSES)}."
+                )
+            params["status"] = normalized
+        if cursor:
+            params["cursor"] = cursor
+
+        payload = await sc.client.get_json(_BASE, params=params)
+        return {
+            "jobs": payload.get("data", []),
+            "pagination": payload.get("pagination", {"has_more": False, "next_cursor": None}),
         }
 
     @mcp.tool(
@@ -284,10 +520,12 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(
         name="gnani_stt_batch_get_transcripts",
         description=(
-            "Download the transcripts for a completed Batch STT job.\n\n"
-            "Call this after ``gnani_stt_batch_status`` returns "
-            "``COMPLETED`` or ``PARTIAL_FAILURE``. "
-            "Returns ``full_transcript`` and per-segment data for each file.\n\n"
+            "Download the transcripts for a finished Batch STT job.\n\n"
+            "Call this after ``gnani_stt_batch_status`` returns a terminal status "
+            "(``COMPLETED``, ``PARTIAL_FAILURE``, ``FAILED``, ...). "
+            "Returns ``full_transcript`` and per-segment data for each file that succeeded. "
+            "Files that did not succeed are listed too, with ``status`` and an ``error`` "
+            "explaining why (e.g. no speech detected), and a ``warning`` summarises them.\n\n"
             "``transcript_url`` links expire after 1 hour — if download fails, "
             "call this tool again to get fresh URLs."
         ),
@@ -309,39 +547,17 @@ def register(mcp: FastMCP) -> None:
                            "Poll with gnani_stt_batch_status and retry when COMPLETED.",
             }
 
-        files_payload = await sc.client.get_json(
-            f"{_BASE}/{job_id}/files",
-            params={"status": "COMPLETED", "limit": 100},
-        )
+        transcripts = await _fetch_file_results(sc.client, job_id)
 
-        transcripts: list[dict[str, Any]] = []
-        for file_entry in files_payload.get("data", []):
-            transcript_url = file_entry.get("transcript_url")
-            if not transcript_url:
-                transcripts.append({
-                    "file": file_entry.get("original_path"),
-                    "status": file_entry.get("status"),
-                    "error": file_entry.get("error_message"),
-                })
-                continue
-
-            transcript_data = await sc.client.get_presigned(transcript_url)
-            transcripts.append({
-                "file": file_entry.get("original_path"),
-                "file_id": file_entry.get("file_id"),
-                "status": "COMPLETED",
-                "language_code": transcript_data.get("language_code"),
-                "duration_seconds": transcript_data.get("duration_seconds"),
-                "full_transcript": transcript_data.get("full_transcript", ""),
-                "segments": transcript_data.get("segments"),
-            })
-
-        return {
+        result: dict[str, Any] = {
             "job_id": job_id,
             "status": status,
             "progress": status_payload.get("progress"),
             "transcripts": transcripts,
         }
+        if (summary := _failure_summary(transcripts)) is not None:
+            result["warning"] = summary
+        return result
 
     @mcp.tool(
         name="gnani_stt_batch_cancel",
@@ -362,3 +578,52 @@ def register(mcp: FastMCP) -> None:
             "status": payload.get("status"),
             "message": payload.get("message"),
         }
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _build_config(
+    *,
+    model: str,
+    language_code: str,
+    fmt: str | None = None,
+    keyterms: list[str] | None = None,
+    topic: str | None = None,
+    speaker_names: list[str] | None = None,
+    with_diarization: bool = False,
+    num_speakers: int | None = None,
+    is_multi_channel: bool = False,
+    with_denoise: bool = False,
+) -> dict[str, Any]:
+    """Validate inputs and build the Batch job ``config`` object."""
+    lang = normalize_stt_language(language_code, model, batch=True)
+    if fmt is not None and model != "prisma-v3.0":
+        raise ValueError(
+            "format is only supported with model='prisma-v3.0' on Batch "
+            "(Batch refuses it on other models; ITN is not supported on Batch)."
+        )
+    style = validate_stt_format(fmt, model, batch=True)
+    context = build_v3_context(
+        model=model,
+        keyterms=keyterms,
+        topic=topic,
+        speaker_names=speaker_names,
+        batch=True,
+    )
+    config: dict[str, Any] = {
+        "model": "prisma-v3.0" if model == "prisma-v3.0" else _BATCH_V25_MODEL,
+        "language_code": lang,
+        "mode": "transcribe",
+        "with_diarization": with_diarization,
+        "is_multi_channel": is_multi_channel,
+        "with_denoise": with_denoise,
+    }
+    if with_diarization and num_speakers is not None:
+        config["num_speakers"] = num_speakers
+    if style is not None:
+        config["format"] = style
+    config.update(context)
+    return config

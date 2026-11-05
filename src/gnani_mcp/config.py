@@ -39,7 +39,7 @@ class Config:
     output_mode: OutputMode = DEFAULT_OUTPUT_MODE
 
     @classmethod
-    def load(cls) -> "Config":
+    def load(cls) -> Config:
         """Resolve config from env vars, falling back to ~/.gnani/credentials."""
         creds = _read_credentials_file()
 
