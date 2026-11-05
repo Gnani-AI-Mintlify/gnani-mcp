@@ -1,6 +1,6 @@
 name: Publish to PyPI
 
-# Real release:  git tag v0.2.0 && git push origin v0.2.0
+# Real release:  git tag v0.2.1 && git push origin v0.2.1
 # Rehearsal:     Actions tab -> "Publish to PyPI" -> Run workflow (uploads to TestPyPI only)
 on:
   push:
