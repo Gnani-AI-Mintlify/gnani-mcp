@@ -105,7 +105,7 @@ pip install gnani-mcp
 | `gnani_stt_batch_transcribe` | Transcribe long (up to 4 h) or remote audio: create → start → poll → fetch, in one call. Supports both models |
 | `gnani_stt_batch_list_jobs` | List Batch STT jobs (status filter + cursor pagination) |
 | `gnani_stt_batch_status` / `_get_transcripts` / `_cancel` | Check, download, or cancel an existing Batch job |
-| `gnani_tts_synthesize` | Synthesize speech. `model`: `timbre-v2.5` (default, 42 voices) or `timbre-v3.0` (13 voices, all 10 languages, inline audio tags) |
+| `gnani_tts_synthesize` | Synthesize speech. `model`: `timbre-v2.5` (default, 42 voices) or `timbre-v3.0` (34 voices, all 10 languages, inline audio tags) |
 | `gnani_tts_list_voices` | Browse the voice catalog for either TTS model (language, gender, persona, description) |
 | `gnani_vc_generate_embedding` | Extract a speaker embedding from a reference audio clip (step 1 of voice cloning) |
 | `gnani_vc_synthesize` | Synthesize speech in a cloned voice using a speaker embedding (step 2) |
@@ -122,7 +122,8 @@ Both new models are **opt-in** — omit `model` and behaviour is unchanged (Pris
 
 **Timbre v3.0** (`model="timbre-v3.0"`) on `gnani_tts_synthesize`:
 
-- Voices are **not** shared between models: Shivani, Lakshmi, Kalpana, Chetana, Vasudha, Riyaa, Tarika (F); Avinash, Shubham, Prakash, Devansh, Yashraj, Harshad (M). Every voice speaks all 10 languages.
+- Voices are **not** shared between models. There are 34 Timbre v3.0 voices, and every voice speaks all 10 languages. Female: Anitasingh, Chetana, Kalpana, Lakshmi, Lakshmidevi, Neelam, Priyasharm, Rajni, Rekha, Riyaa, Shivani, Shruthi, Sneha, Sohini, Sunaina, Swathi, Tarika, Vasudha. Male: Arko, Avinash, Devansh, Harshad, Mahendra, Manjunath, Nitin, Prakash, Rahulmehta, Rajeev, Rakesh, Santosh, Shubham, Vikramdasu, Vinod, Yashraj.
+- `speed` is optional. On Timbre v3.0 it accepts 0.8 to 1.2 (the service snaps it to 0.8, 1.0 or 1.2); on Timbre v2.5 it accepts 0.85 to 1.15. When you leave it out, the voice's recommended speed is used.
 - Inline audio tags in `text`: `<laugh>`, `<giggle>`, `<sigh>`, `<exhales>`, `<sniffles>`, `<yawns>`, `<coughs>`, `<clears throat>`, `<whispers>`, `<shouting>`, `<excited>`, `<slow>`, `<pauses>` (silence, never spoken). A tag applies until the next tag; tags are billed as characters. With v2.5 they are stripped, and the tool returns a warning.
 
 ---
@@ -165,7 +166,7 @@ gnani-mcp --transport http --host 127.0.0.1 --port 8000 --path /mcp
 
 ### TTS (Timbre v2.5 / v3.0) — also supports Hinglish (`hi-en`) and `auto`
 
-Timbre v2.5: 42 voices across all 10 Indian languages plus Hinglish, one preferred language each. Timbre v3.0: 13 voices that each speak all 10 languages. Use `gnani_tts_list_voices` (with `model`) to browse.
+Timbre v2.5: 42 voices across all 10 Indian languages plus Hinglish, one preferred language each. Timbre v3.0: 34 voices that each speak all 10 languages. Use `gnani_tts_list_voices` (with `model`) to browse.
 
 ---
 

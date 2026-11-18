@@ -46,13 +46,14 @@ from gnani_mcp.voices import (  # noqa: E402
 
 
 class TestV3Catalog:
-    def test_has_13_voices(self) -> None:
-        assert len(VOICE_CATALOG_V3) == 13
+    def test_has_34_voices(self) -> None:
+        assert len(VOICE_CATALOG_V3) == 34
+        assert len({v["voice"] for v in VOICE_CATALOG_V3}) == 34
 
     def test_gender_split(self) -> None:
         females = [v for v in VOICE_CATALOG_V3 if v["gender"] == "Female"]
-        assert len(females) == 7
-        assert len(VOICE_CATALOG_V3) - len(females) == 6
+        assert len(females) == 18
+        assert len(VOICE_CATALOG_V3) - len(females) == 16
 
     def test_no_overlap_with_v25(self) -> None:
         v3 = {v["voice"] for v in VOICE_CATALOG_V3}
