@@ -257,6 +257,7 @@ Output styles: **verbatim** spells numbers as words and writes English words in 
 | `model`, `format` | See above. |
 | `keyterms`, `topic`, `previous_text`, `speaker_names` | v3.0 context hints (up to 200 keyterms; `topic` up to 1,600 characters; `previous_text` uses the last 600 characters; 1–4 `speaker_names`, a spelling aid, not speaker separation). |
 | `itn_native_numerals` | v2.5 only, with `format="transcribe"`: digits in the native script. |
+| `bias_list` + `bias_score` | v2.5 only, word boosting: up to 100 single words (letters only, no spaces or digits) to favour, such as brand names, and a strength of 0.0, 0.5, 1.0, 1.5 or 2.0 (default 1.0). Best with `format="verbatim"`. On v3.0 use `keyterms`. |
 | `enable_substitution` + `substitution_map` | Find-and-replace on the final text (up to 10 rules). |
 
 Returns `transcript`, `model`, `request_id` and, on v3.0, `detected_language_code` (left out when the transcript is empty or the format is `transliterate`).
@@ -266,12 +267,13 @@ Returns `transcript`, `model`, `request_id` and, on v3.0, `detected_language_cod
 | Parameter | What it means |
 |---|---|
 | `language_code` | Required. v2.5: one code, or up to 3 for per-file detection. v3.0: `indic-auto` or 1–4 codes. |
-| `audio_path` / `audio_url` | One of: a local file (**max 10 MB**) or a public link (up to 4 hours; the Gnani API expects an HTTPS link). One file per call: ZIPs, multi-file jobs and cloud-storage (S3 and others) sources aren't supported here. Formats: WAV, MP3, MP4, FLAC, OGG, Opus, M4A, AAC, WebM, AMR. |
+| `audio_path` / `audio_url` | One of: a local file or a public link (up to 4 hours; the Gnani API expects an HTTPS link). Local files over 10 MB (up to 5 GiB) are uploaded through the API's large-file route automatically, but that route is not available on the production API yet (it returns 404), so for now host big files and pass `audio_url`, or split them under 10 MB. One file per call: ZIPs, multi-file jobs and cloud-storage (S3 and others) sources aren't supported here. Formats: WAV, MP3, MP4, FLAC, OGG, Opus, M4A, AAC, WebM, AMR. |
 | `model`, `format` | `format` is v3.0 only here (`transliterate` isn't available for batch). |
 | `with_diarization`, `num_speakers` | Separate speakers; `num_speakers` (1–8) is an upper limit, not a target. |
 | `with_denoise` | Clean noisy audio first. Leave off for clean recordings. |
 | `is_multi_channel` | Only for true multi-channel files. |
 | `keyterms`, `topic`, `speaker_names` | v3.0 only; use one of the allowed combinations (see above). |
+| `bias_list` + `bias_score` | v2.5 only, word boosting (same rules as above). |
 | `callback_url` | HTTPS address Gnani posts results to when the job finishes. |
 
 The call waits while the job runs (checks every 10 seconds, up to 30 minutes). If it is cut short, the job keeps running on Gnani's servers; use `gnani_stt_batch_list_jobs`, `_status` and `_get_transcripts` to pick it up. `_cancel` works while a job is `CREATED`, `STARTING`, `QUEUED` or `IN_PROGRESS`. Transcript links expire after an hour; call `_get_transcripts` again for fresh ones.

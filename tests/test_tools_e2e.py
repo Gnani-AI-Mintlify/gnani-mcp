@@ -817,3 +817,209 @@ async def test_batch_start_failed_without_reason_has_a_default(monkeypatch: pyte
     res = await _call("gnani_stt_batch_transcribe", {"audio_path": wav, "language_code": "hi-IN"})
     assert res.data["error"].startswith("The job failed to start.")
     assert "clip.wav" in res.data["error"] and "uploaded file" in res.data["error"]
+
+
+# ---------------------------------------------------------------------------
+# Word boosting (Prisma v2.5 bias_list / bias_score)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_stt_v25_word_boosting_sent_as_form_fields(wav: str) -> None:
+    route = respx.post(f"{BASE}/stt/v3").mock(
+        return_value=httpx.Response(200, json={"success": True, "transcript": "hi"})
+    )
+    await _call(
+        "gnani_stt_transcribe",
+        {"audio_path": wav, "language_code": "hi-IN", "bias_list": ["HDFC", "प्रिज़्म"], "bias_score": 1.5},
+    )
+    body = route.calls.last.request.content
+    assert b'name="bias_list"\r\n\r\n["HDFC", "\xe0\xa4\xaa\xe0\xa5\x8d\xe0\xa4\xb0\xe0\xa4\xbf\xe0\xa4\x9c\xe0\xa4\xbc\xe0\xa5\x8d\xe0\xa4\xae"]' in body
+    assert b'name="bias_score"\r\n\r\n1.5' in body
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_stt_v25_bias_score_defaults_to_one(wav: str) -> None:
+    route = respx.post(f"{BASE}/stt/v3").mock(
+        return_value=httpx.Response(200, json={"success": True, "transcript": "hi"})
+    )
+    await _call("gnani_stt_transcribe", {"audio_path": wav, "language_code": "hi-IN", "bias_list": ["EMI"]})
+    assert b'name="bias_score"\r\n\r\n1.0' in route.calls.last.request.content
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_stt_without_bias_sends_no_bias_fields(wav: str) -> None:
+    route = respx.post(f"{BASE}/stt/v3").mock(return_value=httpx.Response(200, json={"success": True, "transcript": "hi"}))
+    await _call("gnani_stt_transcribe", {"audio_path": wav, "language_code": "hi-IN"})
+    assert b"bias_" not in route.calls.last.request.content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        ({"model": "prisma-v3.0", "bias_list": ["EMI"]}, "keyterms"),
+        ({"bias_list": ["two words"]}, "single word"),
+        ({"bias_list": ["EMI2"]}, "single word"),
+        ({"bias_list": ["EMI"], "bias_score": 3.0}, "bias_score must be one of"),
+        ({"bias_score": 1.0}, "needs a bias_list"),
+        ({"bias_list": [f"w{'a' * i}" for i in range(101)]}, "at most 100"),
+    ],
+)
+async def test_stt_bias_validation(wav: str, args: dict, message: str) -> None:
+    # Validation is local: no API mock is needed because nothing may be sent.
+    res = await _call(
+        "gnani_stt_transcribe", {"audio_path": wav, "language_code": "hi-IN", **args}, raise_on_error=False
+    )
+    assert res.is_error
+    assert message in str(res.content[0].text)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_batch_v25_word_boosting_goes_into_config(wav: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("gnani_mcp.tools.stt_batch._POLL_INTERVAL_SECONDS", 0)
+    create = respx.post(_JOBS).mock(return_value=httpx.Response(201, json={"job_id": "jb", "status": "CREATED"}))
+    respx.post(f"{_JOBS}/jb/start").mock(return_value=httpx.Response(202, json={}))
+    respx.get(f"{_JOBS}/jb").mock(return_value=httpx.Response(200, json={"job_id": "jb", "status": "FAILED", "progress": {}}))
+    respx.get(f"{_JOBS}/jb/files").mock(
+        return_value=httpx.Response(200, json={"data": [], "pagination": {"has_more": False, "next_cursor": None}})
+    )
+    await _call(
+        "gnani_stt_batch_transcribe",
+        {"audio_path": wav, "language_code": "hi-IN", "bias_list": ["Prisma", "EMI"], "bias_score": 2.0},
+    )
+    body = create.calls.last.request.content
+    assert b'"bias_list": ["Prisma", "EMI"]' in body
+    assert b'"bias_score": 2.0' in body
+
+
+# ---------------------------------------------------------------------------
+# Large local files: presigned upload (over 10 MB)
+# ---------------------------------------------------------------------------
+
+_JOBS_V2 = f"{BASE}/stt/v3/batch/v2/jobs"
+_UPLOAD_URL = "https://uploads.example.com/bucket/big.wav?X-Amz-Signature=secret"
+
+
+@pytest.fixture
+def big_wav(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+    """A small file, with the 10 MB switch lowered so tests stay fast."""
+    monkeypatch.setattr("gnani_mcp.tools.stt_batch._DIRECT_UPLOAD_MAX_BYTES", 10)
+    monkeypatch.setattr("gnani_mcp.tools.stt_batch._POLL_INTERVAL_SECONDS", 0)
+    p = tmp_path / "big.wav"
+    p.write_bytes(b"RIFF" + b"\x01" * 4096)
+    return str(p)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_batch_large_file_uses_presigned_upload(big_wav: str) -> None:
+    create = respx.post(_JOBS_V2).mock(
+        return_value=httpx.Response(
+            201, json={"job_id": "jl", "status": "CREATED", "uploads": [{"filename": "big.wav", "url": _UPLOAD_URL}]}
+        )
+    )
+    put = respx.put(_UPLOAD_URL).mock(return_value=httpx.Response(200))
+    multipart = respx.post(_JOBS).mock(return_value=httpx.Response(500))
+    start = respx.post(f"{_JOBS}/jl/start").mock(return_value=httpx.Response(202, json={}))
+    respx.get(f"{_JOBS}/jl").mock(return_value=httpx.Response(200, json={"job_id": "jl", "status": "COMPLETED", "progress": {}}))
+    respx.get(f"{_JOBS}/jl/files").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [_file("big.wav", "COMPLETED", url="https://dl.example.com/t.json", fid="f1")],
+                "pagination": {"has_more": False, "next_cursor": None},
+            },
+        )
+    )
+    respx.get("https://dl.example.com/t.json").mock(
+        return_value=httpx.Response(200, json={"full_transcript": "ok", "segments": []})
+    )
+    res = await _call(
+        "gnani_stt_batch_transcribe",
+        {"audio_path": big_wav, "language_code": "hi-IN", "callback_url": "https://example.com/hook"},
+    )
+
+    body = json.loads(create.calls.last.request.content)
+    assert body["source"] == {"type": "direct_upload_url", "files": [{"filename": "big.wav"}]}
+    assert body["config"]["language_code"] == "hi-IN"
+    assert body["callback_url"] == "https://example.com/hook"
+    # The file is PUT whole, without the API key (the URL itself is signed).
+    req = put.calls.last.request
+    assert req.headers["content-length"] == str(4 + 4096)
+    assert "x-api-key-id" not in req.headers
+    assert b"".join([req.content]) == b"RIFF" + b"\x01" * 4096
+    assert not multipart.called
+    assert start.called
+    assert res.data["status"] == "COMPLETED"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_batch_large_file_upload_failure_cancels_job_and_hides_url(big_wav: str) -> None:
+    respx.post(_JOBS_V2).mock(
+        return_value=httpx.Response(201, json={"job_id": "jx", "uploads": [{"url": _UPLOAD_URL}]})
+    )
+    respx.put(_UPLOAD_URL).mock(return_value=httpx.Response(403, text="SignatureDoesNotMatch"))
+    cancel = respx.post(f"{_JOBS}/jx/cancel").mock(return_value=httpx.Response(200, json={}))
+    start = respx.post(f"{_JOBS}/jx/start").mock(return_value=httpx.Response(202, json={}))
+    res = await _call("gnani_stt_batch_transcribe", {"audio_path": big_wav, "language_code": "hi-IN"}, raise_on_error=False)
+    assert res.is_error
+    text = str(res.content[0].text)
+    assert "Large-file upload failed (HTTP 403)" in text
+    assert "X-Amz-Signature" not in text
+    assert cancel.called
+    assert not start.called
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_batch_large_file_missing_upload_link_cancels_job(big_wav: str) -> None:
+    respx.post(_JOBS_V2).mock(return_value=httpx.Response(201, json={"job_id": "jn", "uploads": []}))
+    cancel = respx.post(f"{_JOBS}/jn/cancel").mock(return_value=httpx.Response(200, json={}))
+    res = await _call("gnani_stt_batch_transcribe", {"audio_path": big_wav, "language_code": "hi-IN"}, raise_on_error=False)
+    assert res.is_error
+    assert "upload link" in str(res.content[0].text)
+    assert cancel.called
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_batch_small_file_still_uses_multipart(wav: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("gnani_mcp.tools.stt_batch._POLL_INTERVAL_SECONDS", 0)
+    multipart = respx.post(_JOBS).mock(return_value=httpx.Response(201, json={"job_id": "js"}))
+    v2 = respx.post(_JOBS_V2).mock(return_value=httpx.Response(500))
+    respx.post(f"{_JOBS}/js/start").mock(return_value=httpx.Response(202, json={}))
+    respx.get(f"{_JOBS}/js").mock(return_value=httpx.Response(200, json={"job_id": "js", "status": "FAILED", "progress": {}}))
+    respx.get(f"{_JOBS}/js/files").mock(
+        return_value=httpx.Response(200, json={"data": [], "pagination": {"has_more": False, "next_cursor": None}})
+    )
+    await _call("gnani_stt_batch_transcribe", {"audio_path": wav, "language_code": "hi-IN"})
+    assert multipart.called
+    assert not v2.called
+
+
+@pytest.mark.asyncio
+async def test_batch_file_over_5_gib_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("gnani_mcp.tools.stt_batch._PRESIGNED_MAX_BYTES", 100)
+    monkeypatch.setattr("gnani_mcp.tools.stt_batch._DIRECT_UPLOAD_MAX_BYTES", 10)
+    p = tmp_path / "huge.wav"
+    p.write_bytes(b"x" * 200)
+    res = await _call("gnani_stt_batch_transcribe", {"audio_path": str(p), "language_code": "hi-IN"}, raise_on_error=False)
+    assert res.is_error
+    assert "5 GiB" in str(res.content[0].text)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_batch_large_file_route_missing_gives_actionable_message(big_wav: str) -> None:
+    respx.post(_JOBS_V2).mock(return_value=httpx.Response(404, json={"detail": "Not Found"}))
+    res = await _call("gnani_stt_batch_transcribe", {"audio_path": big_wav, "language_code": "hi-IN"}, raise_on_error=False)
+    assert res.is_error
+    text = str(res.content[0].text)
+    assert "not available on this Gnani server" in text
+    assert "audio_url" in text
