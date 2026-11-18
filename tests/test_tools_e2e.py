@@ -126,6 +126,66 @@ async def test_tts_v3_with_tags(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_tts_new_v3_voice() -> None:
+    route = respx.post(f"{BASE}/api/v1/tts/inference").mock(return_value=httpx.Response(200, content=b"x"))
+    await _call("gnani_tts_synthesize", {"text": "Hi", "voice": "arko", "model": "timbre-v3.0"})
+    assert json.loads(route.calls.last.request.content)["voice"] == "Arko"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_tts_speed_omitted_when_unset() -> None:
+    route = respx.post(f"{BASE}/api/v1/tts/inference").mock(return_value=httpx.Response(200, content=b"x"))
+    await _call("gnani_tts_synthesize", {"text": "Hi", "voice": "Shivani", "model": "timbre-v3.0"})
+    assert "speed" not in json.loads(route.calls.last.request.content)
+    await _call("gnani_tts_synthesize", {"text": "Hi", "voice": "Nalini"})
+    assert "speed" not in json.loads(route.calls.last.request.content)
+
+
+@pytest.mark.asyncio
+@respx.mock
+@pytest.mark.parametrize("speed", [0.8, 1.0, 1.2])
+async def test_tts_v3_speed_range(speed: float) -> None:
+    route = respx.post(f"{BASE}/api/v1/tts/inference").mock(return_value=httpx.Response(200, content=b"x"))
+    await _call(
+        "gnani_tts_synthesize",
+        {"text": "Hi", "voice": "Shivani", "model": "timbre-v3.0", "speed": speed},
+    )
+    assert json.loads(route.calls.last.request.content)["speed"] == speed
+
+
+@pytest.mark.asyncio
+@respx.mock
+@pytest.mark.parametrize(
+    ("model", "voice", "speed"),
+    [
+        ("timbre-v3.0", "Shivani", 0.7),
+        ("timbre-v3.0", "Shivani", 1.3),
+        ("timbre-v2.5", "Nalini", 0.8),
+        ("timbre-v2.5", "Nalini", 1.2),
+    ],
+)
+async def test_tts_speed_out_of_range_rejected(model: str, voice: str, speed: float) -> None:
+    route = respx.post(f"{BASE}/api/v1/tts/inference").mock(return_value=httpx.Response(200, content=b"x"))
+    res = await _call(
+        "gnani_tts_synthesize",
+        {"text": "Hi", "voice": voice, "model": model, "speed": speed},
+        raise_on_error=False,
+    )
+    assert res.is_error
+    assert not route.called
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_tts_v25_speed_range_kept() -> None:
+    route = respx.post(f"{BASE}/api/v1/tts/inference").mock(return_value=httpx.Response(200, content=b"x"))
+    await _call("gnani_tts_synthesize", {"text": "Hi", "voice": "Nalini", "speed": 0.85})
+    assert json.loads(route.calls.last.request.content)["speed"] == 0.85
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_tts_v25_tags_warn() -> None:
     respx.post(f"{BASE}/api/v1/tts/inference").mock(return_value=httpx.Response(200, content=b"x"))
     res = await _call("gnani_tts_synthesize", {"text": "Hi <laugh>", "voice": "Nalini"})
@@ -144,7 +204,7 @@ async def test_tts_wrong_voice_for_model() -> None:
 @pytest.mark.asyncio
 async def test_list_voices_v3() -> None:
     res = await _call("gnani_tts_list_voices", {"model": "timbre-v3.0", "gender": "Male"})
-    assert res.data["total_voices"] == 6
+    assert res.data["total_voices"] == 16
     assert "laugh" in res.data["audio_tags"]
 
 

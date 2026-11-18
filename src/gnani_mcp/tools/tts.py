@@ -41,6 +41,26 @@ _DEFAULT_ENCODING: AudioEncoding = "linear_pcm"
 
 _AUDIO_TAGS_DOC = ", ".join(f"<{t}>" for t in AUDIO_TAGS)
 
+# Accepted ``speed`` range per model. Timbre v3.0 accepts 0.8-1.2 (the service snaps it to
+# 0.8, 1.0 or 1.2); Timbre v2.5 accepts any value from 0.85 to 1.15.
+SPEED_RANGES: dict[str, tuple[float, float]] = {
+    "timbre-v2.5": (0.85, 1.15),
+    "timbre-v3.0": (0.8, 1.2),
+}
+
+
+def validate_speed(model: str, speed: float | None) -> float | None:
+    """Check *speed* against the range for *model*. ``None`` (not set) is always valid."""
+    if speed is None:
+        return None
+    low, high = SPEED_RANGES[model]
+    if not low <= speed <= high:
+        raise ValueError(
+            f"speed {speed} is outside the range for {model}: {low} to {high}. "
+            "Leave speed unset to use the voice's default."
+        )
+    return speed
+
 
 def build_tts_warnings(model: str, text: str) -> list[str]:
     """Return non-fatal warnings about audio tags in *text* for *model*."""
@@ -71,7 +91,7 @@ def register(mcp: FastMCP) -> None:
             "**Models** (voices are NOT interchangeable between them):\n"
             "- ``timbre-v2.5`` (default) — 42 voices; each has one preferred language "
             "(10 Indian languages + Hinglish).\n"
-            "- ``timbre-v3.0`` — 13 voices that each speak all 10 languages and support "
+            "- ``timbre-v3.0`` — 34 voices that each speak all 10 languages and support "
             f"inline audio tags: {_AUDIO_TAGS_DOC}. Tags apply from their position to the "
             "end of the text (or the next tag); ``<pauses>`` inserts silence and is never "
             "spoken. Tags count as billable characters.\n\n"
@@ -87,8 +107,11 @@ def register(mcp: FastMCP) -> None:
             "- Bengali (bn-IN): Kirra (F), Dhruva (M)\n"
             "- Gujarati (gu-IN): Falak (F), Veera (M)\n"
             "- Punjabi (pa-IN): Mehuli (F), Zayan (M)\n\n"
-            "**Timbre v3.0 voices:** Shivani, Lakshmi, Kalpana, Chetana, Vasudha, Riyaa, "
-            "Tarika (F); Avinash, Shubham, Prakash, Devansh, Yashraj, Harshad (M).\n\n"
+            "**Timbre v3.0 voices:** Anitasingh, Chetana, Kalpana, Lakshmi, Lakshmidevi, "
+            "Neelam, Priyasharm, Rajni, Rekha, Riyaa, Shivani, Shruthi, Sneha, Sohini, "
+            "Sunaina, Swathi, Tarika, Vasudha (F); Arko, Avinash, Devansh, Harshad, "
+            "Mahendra, Manjunath, Nitin, Prakash, Rahulmehta, Rajeev, Rakesh, Santosh, "
+            "Shubham, Vikramdasu, Vinod, Yashraj (M).\n\n"
             "Use ``gnani_tts_list_voices`` (with ``model``) to browse the full catalog with "
             "personas and descriptions.\n\n"
             "Numbers, currency, dates and IDs are normalised to spoken form automatically "
@@ -127,14 +150,13 @@ def register(mcp: FastMCP) -> None:
                 "language; timbre-v3.0 voices speak all 10 languages."
             ),
         ),
-        speed: float = Field(
-            default=1.0,
+        speed: float | None = Field(
+            default=None,
             description=(
-                "Playback speed multiplier. Range 0.85 (slowest) to 1.15 (fastest). "
-                "1.0 = normal speed."
+                "Playback speed multiplier. Optional: when omitted, the service uses the "
+                "voice's recommended speed. Range depends on the model: timbre-v3.0 0.8 to 1.2 "
+                "(snapped to 0.8, 1.0 or 1.2), timbre-v2.5 0.85 to 1.15. 1.0 = normal speed."
             ),
-            ge=0.85,
-            le=1.15,
         ),
         sample_rate: int = Field(
             default=_DEFAULT_SAMPLE_RATE,
@@ -164,6 +186,7 @@ def register(mcp: FastMCP) -> None:
         sc = await ready_ctx(ctx)
 
         canonical_voice = resolve_voice(model, voice)
+        speed = validate_speed(model, speed)
         warnings = build_tts_warnings(model, text)
 
         audio_config: dict[str, Any] = {
@@ -181,9 +204,10 @@ def register(mcp: FastMCP) -> None:
             "voice": canonical_voice,
             "model": model,
             "language": language,
-            "speed": speed,
             "audio_config": audio_config,
         }
+        if speed is not None:
+            json_body["speed"] = speed
 
         audio_bytes = await sc.client.post_json_binary(_TTS_PATH, json_body=json_body)
 
@@ -219,7 +243,7 @@ def register(mcp: FastMCP) -> None:
             "``gnani_tts_synthesize``.\n\n"
             "``model='timbre-v2.5'`` (default) returns 42 voices, each with one preferred "
             "language — filter with ``language`` (e.g. 'hi-IN'). "
-            "``model='timbre-v3.0'`` returns 13 voices that all speak every supported "
+            "``model='timbre-v3.0'`` returns 34 voices that all speak every supported "
             "language, so ``language`` is not a useful filter there.\n\n"
             "Optionally filter by ``gender`` ('Male' or 'Female')."
         ),
@@ -228,7 +252,7 @@ def register(mcp: FastMCP) -> None:
         ctx: Context,
         model: TtsModel = Field(
             default=DEFAULT_TTS_MODEL,
-            description="'timbre-v2.5' (default, 42 voices) or 'timbre-v3.0' (13 voices).",
+            description="'timbre-v2.5' (default, 42 voices) or 'timbre-v3.0' (34 voices).",
         ),
         language: str | None = Field(
             default=None,

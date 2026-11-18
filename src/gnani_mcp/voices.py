@@ -63,25 +63,46 @@ VOICE_CATALOG_V25: list[dict[str, str]] = [
 ]
 
 # ---------------------------------------------------------------------------
-# Timbre v3.0 — 13 voices, each speaks all 10 languages, supports audio tags
+# Timbre v3.0 — 34 voices, each speaks all 10 languages, supports audio tags
 # ---------------------------------------------------------------------------
 
 V3_LANGUAGES = "hi-IN, en-IN, ta-IN, te-IN, kn-IN, ml-IN, mr-IN, pa-IN, bn-IN, gu-IN"
 
 VOICE_CATALOG_V3: list[dict[str, str]] = [
-    {"voice": "Avinash",  "gender": "Male",   "language": "all", "persona": "Professional",          "description": "Professional, firm voice with deliberate pacing for collections and BFSI"},
-    {"voice": "Chetana",  "gender": "Female", "language": "all", "persona": "Warm, empathetic",      "description": "Gentle, empathetic voice for healthcare and telecom customer service"},
-    {"voice": "Devansh",  "gender": "Male",   "language": "all", "persona": "Conversational",        "description": "Energetic, young conversational voice for sales and fintech"},
-    {"voice": "Harshad",  "gender": "Male",   "language": "all", "persona": "Professional",          "description": "Professional, firm voice for collections and payment recovery"},
-    {"voice": "Kalpana",  "gender": "Female", "language": "all", "persona": "Warm, empathetic",      "description": "Empathetic, composed voice for customer care and insurance"},
-    {"voice": "Lakshmi",  "gender": "Female", "language": "all", "persona": "Expressive, energetic", "description": "Expressive, warm voice for storytelling and e-learning narration"},
-    {"voice": "Prakash",  "gender": "Male",   "language": "all", "persona": "Professional",          "description": "Steady, deliberate voice for payment recovery and BFSI"},
-    {"voice": "Riyaa",    "gender": "Female", "language": "all", "persona": "Confident, authoritative", "description": "Confident, lively voice for outbound sales and insurance"},
-    {"voice": "Shivani",  "gender": "Female", "language": "all", "persona": "Warm, empathetic",      "description": "Warm, patient, empathy-first voice for inbound customer support"},
-    {"voice": "Shubham",  "gender": "Male",   "language": "all", "persona": "Expressive, energetic", "description": "Energetic, confident voice for outbound sales and lead qualification"},
-    {"voice": "Tarika",   "gender": "Female", "language": "all", "persona": "Warm, empathetic",      "description": "Warm, reassuring voice for banking and insurance customer care"},
-    {"voice": "Vasudha",  "gender": "Female", "language": "all", "persona": "Expressive, energetic", "description": "Expressive, composed voice for narration and e-learning"},
-    {"voice": "Yashraj",  "gender": "Male",   "language": "all", "persona": "Warm, empathetic",      "description": "Warm narrative voice for e-learning and IVR narration"},
+    {"voice": "Anitasingh",  "gender": "Female", "language": "all", "persona": "Firm yet empathetic", "description": "Collections, payment reminders, BFSI"},
+    {"voice": "Arko",        "gender": "Male",   "language": "all", "persona": "Deep authoritative baritone", "description": "Narration, announcements, brand"},
+    {"voice": "Avinash",     "gender": "Male",   "language": "all", "persona": "Calm and captivating", "description": "Brand films, e-learning, advertising"},
+    {"voice": "Chetana",     "gender": "Female", "language": "all", "persona": "Soft and intimate", "description": "Audiobooks, romance, ASMR-style content"},
+    {"voice": "Devansh",     "gender": "Male",   "language": "all", "persona": "Soft and sincere", "description": "Storytelling, drama, emotional content"},
+    {"voice": "Harshad",     "gender": "Male",   "language": "all", "persona": "Deep and grounded", "description": "Conversational IVR, regional engagement"},
+    {"voice": "Kalpana",     "gender": "Female", "language": "all", "persona": "Friendly and encouraging", "description": "Tutoring, e-learning, onboarding"},
+    {"voice": "Lakshmi",     "gender": "Female", "language": "all", "persona": "Clear and authoritative", "description": "Corporate IVR, explainers, announcements"},
+    {"voice": "Lakshmidevi", "gender": "Female", "language": "all", "persona": "Warm and patient", "description": "Inbound support, banking, healthcare"},
+    {"voice": "Mahendra",    "gender": "Male",   "language": "all", "persona": "Youthful and energetic", "description": "Apps, tech support, Gen-Z engagement"},
+    {"voice": "Manjunath",   "gender": "Male",   "language": "all", "persona": "Steady and dependable", "description": "Narration, IVR, informational content"},
+    {"voice": "Neelam",      "gender": "Female", "language": "all", "persona": "Versatile and expressive", "description": "Multi-language campaigns, IVR, narration"},
+    {"voice": "Nitin",       "gender": "Male",   "language": "all", "persona": "Measured and unhurried", "description": "Audiobooks, long-form narration, politics"},
+    {"voice": "Prakash",     "gender": "Male",   "language": "all", "persona": "Calm and reassuring", "description": "Support bots, healthcare, guided flows"},
+    {"voice": "Priyasharm",  "gender": "Female", "language": "all", "persona": "Warm and patient", "description": "Inbound support, banking, healthcare"},
+    {"voice": "Rahulmehta",  "gender": "Male",   "language": "all", "persona": "Expressive and warm", "description": "E-learning, narration, explainers"},
+    {"voice": "Rajeev",      "gender": "Male",   "language": "all", "persona": "Authentic and earthy", "description": "Regional outreach, health, social campaigns"},
+    {"voice": "Rajni",       "gender": "Female", "language": "all", "persona": "Mature and commanding", "description": "Announcements, governance, formal IVR"},
+    {"voice": "Rakesh",      "gender": "Male",   "language": "all", "persona": "Clean and neutral", "description": "News, broadcast, general-purpose IVR"},
+    {"voice": "Rekha",       "gender": "Female", "language": "all", "persona": "Warm and relatable", "description": "Rural engagement, agriculture, social outreach"},
+    {"voice": "Riyaa",       "gender": "Female", "language": "all", "persona": "Upbeat and persuasive", "description": "Retail ads, e-commerce, promotions"},
+    {"voice": "Santosh",     "gender": "Male",   "language": "all", "persona": "Fresh and unaffected", "description": "Local conversation, community engagement"},
+    {"voice": "Shivani",     "gender": "Female", "language": "all", "persona": "Warm and affectionate", "description": "Companion apps, casual engagement"},
+    {"voice": "Shruthi",     "gender": "Female", "language": "all", "persona": "Confident and polished", "description": "Finance, health, professional IVR"},
+    {"voice": "Shubham",     "gender": "Male",   "language": "all", "persona": "Bold and high-energy", "description": "Ads, promotions, mass-market campaigns"},
+    {"voice": "Sneha",       "gender": "Female", "language": "all", "persona": "Bright and articulate", "description": "Education, health, regional campaigns"},
+    {"voice": "Sohini",      "gender": "Female", "language": "all", "persona": "Clear and composed", "description": "Support, education, financial services"},
+    {"voice": "Sunaina",     "gender": "Female", "language": "all", "persona": "Grounded and natural", "description": "IVR, rural outreach, government services"},
+    {"voice": "Swathi",      "gender": "Female", "language": "all", "persona": "Modern and confident", "description": "Education, social media, youth engagement"},
+    {"voice": "Tarika",      "gender": "Female", "language": "all", "persona": "Soft-spoken and gentle", "description": "Tech support, guided troubleshooting"},
+    {"voice": "Vasudha",     "gender": "Female", "language": "all", "persona": "Polished and aspirational", "description": "Premium ads, brand campaigns"},
+    {"voice": "Vikramdasu",  "gender": "Male",   "language": "all", "persona": "Energetic and persuasive", "description": "Outbound sales, lead qualification"},
+    {"voice": "Vinod",       "gender": "Male",   "language": "all", "persona": "Mature and seasoned", "description": "Formal narration, institutional content"},
+    {"voice": "Yashraj",     "gender": "Male",   "language": "all", "persona": "Smooth and magnetic", "description": "Brand voiceovers, luxury, lifestyle"},
 ]
 
 _CATALOGS: dict[str, list[dict[str, str]]] = {
