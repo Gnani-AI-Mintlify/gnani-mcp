@@ -46,6 +46,8 @@ async def test_tools_registered() -> None:
         "gnani_tts_synthesize",
         "gnani_tts_list_voices",
     } <= names
+    assert not {n for n in names if "vc" in n or "clone" in n}
+    assert len(names) == 8
 
 
 @pytest.mark.asyncio
@@ -432,22 +434,6 @@ async def test_tts_wav_keeps_requested_sample_rate() -> None:
     assert "warnings" not in res.data
 
 
-@pytest.mark.asyncio
-@respx.mock
-async def test_vc_alaw_reports_real_sample_rate() -> None:
-    respx.post(f"{BASE}/api/v1/tts/inference").mock(return_value=httpx.Response(200, content=b"\xd5" * 64))
-    res = await _call(
-        "gnani_vc_synthesize",
-        {
-            "text": "Hi",
-            "speaker_embedding": {"embedding": "AAAA", "shape": [1, 4], "dtype": "torch.bfloat16"},
-            "container": "alaw",
-        },
-    )
-    assert res.data["sample_rate"] == 8000
-    assert "ignored" in res.data["warnings"][0]
-
-
 # ── Saved file follows the real content, not the requested container ────────
 
 from gnani_mcp.audio import detect_audio_container  # noqa: E402
@@ -529,23 +515,6 @@ async def test_tts_wav_with_oggopus_is_saved_as_ogg() -> None:
     assert res.data["container"] == "ogg"
     assert res.data["encoding"] == "oggopus"
     assert "OGG/Opus" in res.data["warnings"][0]
-
-
-@pytest.mark.asyncio
-@respx.mock
-async def test_vc_wav_with_mulaw_encoding_is_saved_as_raw() -> None:
-    respx.post(f"{BASE}/api/v1/tts/inference").mock(return_value=httpx.Response(200, content=_MULAW))
-    res = await _call(
-        "gnani_vc_synthesize",
-        {
-            "text": "Hi",
-            "speaker_embedding": {"embedding": "AAAA", "shape": [1, 4], "dtype": "torch.bfloat16"},
-            "encoding": "pcm_mulaw",
-        },
-    )
-    assert res.data["audio_file"].endswith(".raw")
-    assert res.data["container"] == "mulaw"
-    assert res.data["encoding"] == "pcm_mulaw"
 
 
 @pytest.mark.asyncio
@@ -669,19 +638,6 @@ async def test_stt_url_octet_stream_is_accepted() -> None:
     assert res.data["transcript"] == "hi"
 
 
-@pytest.mark.asyncio
-@respx.mock
-async def test_vc_embedding_still_works_without_filename() -> None:
-    # Voice clone does not need an extension, so the STT filename rule must not leak into it.
-    respx.post(f"{BASE}/api/v1/tts/voice-clone/embeddings").mock(
-        return_value=httpx.Response(
-            200, json={"success": True, "data": {"voice_clone_embedding": {"embedding": "A", "shape": [1], "dtype": "x"}}}
-        )
-    )
-    res = await _call("gnani_vc_generate_embedding", {"audio_base64": base64.b64encode(b"RIFF....WAVEfmt ").decode()})
-    assert res.data["speaker_embedding"]["embedding"] == "A"
-
-
 # ── The file's own header decides the reported sample rate ──────────────────
 
 import struct  # noqa: E402
@@ -771,22 +727,6 @@ async def test_headerless_g711_still_uses_the_8khz_rule() -> None:
     respx.post(f"{BASE}/api/v1/tts/inference").mock(return_value=httpx.Response(200, content=_MULAW))
     res = await _call("gnani_tts_synthesize", {"text": "Hi", "voice": "Kaveri", "container": "mulaw", "sample_rate": 48000})
     assert res.data["sample_rate"] == 8000 and "always 8000 Hz" in res.data["warnings"][0]
-
-
-@pytest.mark.asyncio
-@respx.mock
-async def test_vc_mp3_reports_real_rate() -> None:
-    respx.post(f"{BASE}/api/v1/tts/inference").mock(return_value=httpx.Response(200, content=_mp3_22k()))
-    res = await _call(
-        "gnani_vc_synthesize",
-        {
-            "text": "Hi",
-            "speaker_embedding": {"embedding": "AAAA", "shape": [1, 4], "dtype": "torch.bfloat16"},
-            "container": "mp3",
-            "sample_rate": 44100,
-        },
-    )
-    assert res.data["sample_rate"] == 22050 and "44100 was requested" in res.data["warnings"][0]
 
 
 # ── Batch: reject unusable inputs before a job exists; explain START_FAILED ─

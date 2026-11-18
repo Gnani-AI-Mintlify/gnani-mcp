@@ -1,6 +1,6 @@
 # gnani-mcp
 
-Official Gnani AI MCP server. Exposes Gnani Speech-to-Text (Prisma v2.5 / v3.0), Text-to-Speech (Timbre v2.5 / v3.0), and Voice Clone APIs as first-class MCP tools, so any MCP-aware client (Claude Desktop, Claude Code, Cursor, Windsurf, Zed) can call them with zero boilerplate.
+Official Gnani AI MCP server. Exposes Gnani Speech-to-Text (Prisma v2.5 / v3.0) and Text-to-Speech (Timbre v2.5 / v3.0) APIs as first-class MCP tools, so any MCP-aware client (Claude Desktop, Claude Code, Cursor, Windsurf, Zed) can call them with zero boilerplate.
 
 Cross-platform Python package: **macOS, Windows, and Linux** (Python 3.10+).
 
@@ -107,8 +107,6 @@ pip install gnani-mcp
 | `gnani_stt_batch_status` / `_get_transcripts` / `_cancel` | Check, download, or cancel an existing Batch job |
 | `gnani_tts_synthesize` | Synthesize speech. `model`: `timbre-v2.5` (default, 42 voices) or `timbre-v3.0` (34 voices, all 10 languages, inline audio tags) |
 | `gnani_tts_list_voices` | Browse the voice catalog for either TTS model (language, gender, persona, description) |
-| `gnani_vc_generate_embedding` | Extract a speaker embedding from a reference audio clip (step 1 of voice cloning) |
-| `gnani_vc_synthesize` | Synthesize speech in a cloned voice using a speaker embedding (step 2) |
 
 ### Choosing a model
 
@@ -167,23 +165,6 @@ gnani-mcp --transport http --host 127.0.0.1 --port 8000 --path /mcp
 ### TTS (Timbre v2.5 / v3.0) — also supports Hinglish (`hi-en`) and `auto`
 
 Timbre v2.5: 42 voices across all 10 Indian languages plus Hinglish, one preferred language each. Timbre v3.0: 34 voices that each speak all 10 languages. Use `gnani_tts_list_voices` (with `model`) to browse.
-
----
-
-## Voice Clone Workflow
-
-```python
-# Step 1 — generate embedding from reference audio (do this once per voice)
-embedding_result = gnani_vc_generate_embedding(audio_path="/path/to/reference.wav")
-speaker_embedding = embedding_result["speaker_embedding"]
-
-# Step 2 — synthesize with the cloned voice (reuse embedding as many times as needed)
-audio_result = gnani_vc_synthesize(
-    text="नमस्ते, आप कैसे हैं?",
-    speaker_embedding=speaker_embedding,
-)
-print(audio_result["audio_file"])  # path to saved WAV file
-```
 
 ---
 

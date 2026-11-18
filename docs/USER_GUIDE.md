@@ -1,6 +1,6 @@
 # Gnani MCP Server — User Guide
 
-Speech-to-Text, Text-to-Speech and Voice Cloning for Indian languages, inside your AI coding agent.
+Speech-to-Text and Text-to-Speech for Indian languages, inside your AI coding agent.
 
 **Package:** `gnani-mcp` (v0.2.2) · **License:** MIT · **Works with:** Cursor, Claude Code, Claude Desktop, Codex, and any other MCP-capable client
 
@@ -48,7 +48,6 @@ Gnani speech API                           uses your API key
 |---|---|
 | **Speech-to-Text (STT)** | Transcribe recordings in 10 Indian languages, from short clips to 4-hour files |
 | **Text-to-Speech (TTS)** | Generate natural-sounding speech from text. There are two voice models (42 voices on Timbre v2.5 and 34 on Timbre v3.0), 76 voices in total |
-| **Voice cloning** | Record a short sample of a voice, then generate new speech in that voice |
 
 The server runs **on your own computer**. It reads audio files from your disk, sends them to the Gnani API, and saves any generated audio back to your disk.
 
@@ -334,7 +333,7 @@ Create the file if it doesn't exist, or add the `gnani` entry inside an existing
 You can also rely on `~/.gnani/credentials` and leave out `env` entirely.
 
 **Check that it worked:**
-1. Open Cursor's Customize panel (or Settings → MCP). `gnani` should be listed and switched on, showing 10 tools.
+1. Open Cursor's Customize panel (or Settings → MCP). `gnani` should be listed and switched on, showing 8 tools.
 2. If it isn't, open the Output panel (`Cmd/Ctrl+Shift+U`) and choose **MCP Logs** from the dropdown.
 
 Cursor asks for your approval the first time the agent uses each tool. Click through to allow it, or add the tools to your auto-run list.
@@ -508,12 +507,6 @@ Once connected, just ask in plain English. You don't have to mention tool names,
 - *"Say this with a laugh in the middle, using a female voice on the newest voice model: 'Let me check… `<laugh>` found it!'"* (Expressive tags only work on Timbre v3.0.)
 - *"Make an 8 kHz telephone-quality version of this announcement for a call-centre IVR."*
 
-### Clone a voice
-
-- *"Here's a 15-second sample of my voice: `/Users/me/audio/my-voice.wav`. Create a voice profile from it."*
-- *"Using that voice profile, read this paragraph aloud: …"*
-- *"Using the same voice profile, read this second paragraph too: …"*
-
 ### Combine tasks
 
 - *"Transcribe `/Users/me/call.wav` in Hindi, summarize it in three bullets, then read the summary back as audio in a female English voice."*
@@ -523,7 +516,6 @@ Once connected, just ask in plain English. You don't have to mention tool names,
 
 - **Name the language.** Say "in Hindi" or "in Tamil", or ask for automatic detection.
 - **Match the length to the tool.** Clips of up to 30 seconds can be transcribed in a single step. Longer audio goes through batch transcription, where the server creates a job and checks on it every 10 seconds until it finishes, so be patient.
-- **For voice cloning, use clean audio.** The Gnani docs ask for 5–30 seconds of clear speech. The tool's own guidance is that 10–30 seconds of one person speaking, with little background noise, gives the best results.
 - **For text-to-speech, pick a voice first.** Ask *"What voices do you have for Hindi?"* and then choose one. A voice belongs to one voice model, so a voice from the other model will be rejected.
 - **Be specific about the output.** You can ask for the file type (WAV, MP3 and more), the sample rate and the speaking speed.
 
@@ -531,7 +523,7 @@ Once connected, just ask in plain English. You don't have to mention tool names,
 
 ## 6. Tool reference
 
-The server provides **10 tools**. You normally ask in plain English and the agent chooses the tool. This section tells you what each one can do, which options exist, and what comes back.
+The server provides **8 tools**. You normally ask in plain English and the agent chooses the tool. This section tells you what each one can do, which options exist, and what comes back.
 
 | # | Tool | In one line |
 |---|---|---|
@@ -543,8 +535,6 @@ The server provides **10 tools**. You normally ask in plain English and the agen
 | 6 | `gnani_stt_batch_cancel` | Cancel a running batch job |
 | 7 | `gnani_tts_synthesize` | Turn text into speech |
 | 8 | `gnani_tts_list_voices` | Browse the available voices |
-| 9 | `gnani_vc_generate_embedding` | Create a voice profile from a sample (cloning, step 1) |
-| 10 | `gnani_vc_synthesize` | Speak text in a cloned voice (cloning, step 2) |
 
 ### Speech-to-Text models
 
@@ -703,45 +693,6 @@ If you ask for a voice that belongs to the other model, the tool stops before ca
 
 ---
 
-### Voice cloning
-
-Cloning is a **two-step process**:
-
-1. **Create a voice profile** (a "speaker embedding") from a short recording of the voice.
-2. **Speak text in that voice**, as many times as you like, reusing the profile.
-
-You only do step 1 once per voice. Ask your agent to keep the profile it returns and reuse it.
-
-> **Only clone voices you have the right to use**, for example your own voice or one you have explicit permission for.
-
-### 9. `gnani_vc_generate_embedding`: create the voice profile
-
-Upload **5–30 seconds** of clean, single-speaker audio. The tool's guidance is that 10–30 seconds with little background noise works best.
-
-| Parameter | What it means |
-|---|---|
-| `audio_path` / `audio_base64` / `audio_url` | Provide one: a local path, base64 data, or a link to the reference audio |
-| `filename` | Name with extension; required with base64 or URL |
-
-**Formats:** WAV, MP3, OGG, FLAC, AAC, M4A (as listed in the tool's description; the Gnani documentation's examples use WAV and MP3).
-**Size limit:** audio sent as base64 or fetched from a link can be at most 25 MB.
-**Returns:** `speaker_embedding`, an object holding `embedding` (a long text string), `shape` and `dtype`. Pass it unchanged to the next tool.
-
-### 10. `gnani_vc_synthesize`: speak in the cloned voice
-
-| Parameter | Required | What it means |
-|---|---|---|
-| `text` | yes | What to say |
-| `speaker_embedding` | yes | The object returned by tool 9 |
-| `container` | no | `wav` (default), `mp3`, `ogg`, `raw`, `mulaw`, `alaw` |
-| `sample_rate` | no | 8000, 16000, 22050, 24000 or 44100 Hz (default 44100) |
-| `encoding` | no | `linear_pcm` (default), `pcm_s16le`, `pcm_mulaw`, `pcm_alaw`, `oggopus` |
-| `bitrate` | no | MP3 only: `96k`, `128k`, `192k` |
-
-**Returns:** `audio_file` (the saved file's full path), `size_bytes`, `container`, `encoding`, `sample_rate`, and `warnings` if any.
-
----
-
 ## 7. Languages, models and voices
 
 ### Speech-to-Text languages (both Prisma models)
@@ -804,7 +755,7 @@ Set them in the `env` block of your agent's config, for example:
 }
 ```
 
-The folder is created if it doesn't exist. Files are named with the tool and the date and time (down to the microsecond), such as `gnani_tts_20261103_175002_945517.wav`. Voice-clone audio starts with `gnani_vc_`. Each call writes a new file.
+The folder is created if it doesn't exist. Files are named with the tool and the date and time (down to the microsecond), such as `gnani_tts_20261103_175002_945517.wav`. Each call writes a new file.
 
 ---
 
@@ -824,7 +775,7 @@ The folder is created if it doesn't exist. Files are named with the tool and the
 | I started the server by hand and it just sits there | That's normal. It's waiting for an agent to talk to it. Press `Ctrl+C` to stop it. See [section 3.4](#34-running-the-server-by-hand-optional). |
 | My HTTP-mode server can't find the key | In HTTP mode the key must be set where you start the server (or in `~/.gnani/credentials`), not in the client's config. |
 | "Audio file not found" | The path is wrong or relative. Use the full absolute path. |
-| "Unsupported audio format" | For short-clip transcription and voice cloning, use WAV, MP3, OGG, FLAC, AAC or M4A. Batch transcription also accepts MP4, Opus, WebM and AMR. With base64 or URL input, make sure `filename` has the right extension. |
+| "Unsupported audio format" | For short-clip transcription, use WAV, MP3, OGG, FLAC, AAC or M4A. Batch transcription also accepts MP4, Opus, WebM and AMR. With base64 or URL input, make sure `filename` has the right extension. |
 | "Unsupported language code" | Use a code from [section 7](#7-languages-models-and-voices), such as `hi-IN`. Prisma v2.5 accepts a single language. |
 | "Voice 'X' is not available for timbre-…" | Voices belong to one model. The message names the model the voice belongs to and lists the valid voices. Switch the model, or pick another voice. |
 | Audio tags were removed from my text | Tags only work with `timbre-v3.0`. Ask for that model. |
@@ -851,8 +802,7 @@ The folder is created if it doesn't exist. Files are named with the tool and the
 - **Project-level configs are shared.** `.cursor/mcp.json` and `.mcp.json` often get committed. Keep keys out of them.
 - **Your audio leaves your computer.** Files you transcribe or use as voice references are uploaded to the Gnani API. Don't use sensitive recordings unless that's acceptable under your organization's policies.
 - **The server runs with your permissions.** It reads any file path the agent gives it and writes audio to the output folder. Review the agent's tool calls when you're unsure. Most agents show them and ask for approval.
-- **Requests count against your Gnani account.** Every transcription, synthesis and clone request is made with your API key. In text-to-speech, expressive tags count as billable characters. A request to "try all the voices" makes many calls. Check your plan and usage in your Gnani account.
-- **Cloning consent.** Only clone voices you own or have explicit permission to use.
+- **Requests count against your Gnani account.** Every transcription and synthesis request is made with your API key. In text-to-speech, expressive tags count as billable characters. A request to "try all the voices" makes many calls. Check your plan and usage in your Gnani account.
 
 ---
 

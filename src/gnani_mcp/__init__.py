@@ -1,4 +1,4 @@
-"""Gnani AI MCP server — first-class MCP tools for Gnani Speech APIs (STT, TTS, Voice Clone)."""
+"""Gnani AI MCP server — first-class MCP tools for Gnani Speech APIs (STT, TTS)."""
 
 from importlib.metadata import PackageNotFoundError, version
 
