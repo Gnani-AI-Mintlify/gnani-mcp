@@ -24,6 +24,8 @@ from gnani_mcp.voices import (
     DEFAULT_TTS_MODEL,
     V3_LANGUAGES,
     TtsModel,
+    describe_voices_v3,
+    describe_voices_v25,
     get_catalog,
     inspect_audio_tags,
     resolve_voice,
@@ -95,23 +97,10 @@ def register(mcp: FastMCP) -> None:
             f"inline audio tags: {_AUDIO_TAGS_DOC}. Tags apply from their position to the "
             "end of the text (or the next tag); ``<pauses>`` inserts silence and is never "
             "spoken. Tags count as billable characters.\n\n"
-            "**Timbre v2.5 voices by language:**\n"
-            "- Hindi (hi-IN): Nalini (F), Deepak (M), Bhavna (F), Roopesh (M)\n"
-            "- English (en-IN): Kaveri (F), Trupti (F), Pranav (M), Shlok (M)\n"
-            "- Hinglish (hi-en): Poorvi (F)\n"
-            "- Tamil (ta-IN): Asmita (F), Trisha (F), Vedika (F)\n"
-            "- Telugu (te-IN): Suhana (F), Lavanya (F), Varuni (F)\n"
-            "- Kannada (kn-IN): Saanvi (F), Kavin (M)\n"
-            "- Malayalam (ml-IN): Reshma (F), Riyaan (M)\n"
-            "- Marathi (mr-IN): Zahira (F), Ishaan (M)\n"
-            "- Bengali (bn-IN): Kirra (F), Dhruva (M)\n"
-            "- Gujarati (gu-IN): Falak (F), Veera (M)\n"
-            "- Punjabi (pa-IN): Mehuli (F), Zayan (M)\n\n"
-            "**Timbre v3.0 voices:** Anitasingh, Chetana, Kalpana, Lakshmi, Lakshmidevi, "
-            "Neelam, Priyasharm, Rajni, Rekha, Riyaa, Shivani, Shruthi, Sneha, Sohini, "
-            "Sunaina, Swathi, Tarika, Vasudha (F); Arko, Avinash, Devansh, Harshad, "
-            "Mahendra, Manjunath, Nitin, Prakash, Rahulmehta, Rajeev, Rakesh, Santosh, "
-            "Shubham, Vikramdasu, Vinod, Yashraj (M).\n\n"
+            "**Timbre v2.5 voices by language (all 42):**\n"
+            f"{describe_voices_v25()}\n\n"
+            "**Timbre v3.0 voices (all 34; every voice speaks all 10 languages):**\n"
+            f"{describe_voices_v3()}\n\n"
             "Use ``gnani_tts_list_voices`` (with ``model``) to browse the full catalog with "
             "personas and descriptions.\n\n"
             "Numbers, currency, dates and IDs are normalised to spoken form automatically "

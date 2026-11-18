@@ -36,6 +36,19 @@ async def _call(name: str, args: dict, *, raise_on_error: bool = True):
 
 
 @pytest.mark.asyncio
+async def test_synthesize_description_lists_every_voice() -> None:
+    """The tool description an agent reads must name all 42 + 34 voices."""
+    from gnani_mcp.voices import VOICE_CATALOG_V3, VOICE_CATALOG_V25
+
+    async with Client(build_server()) as client:
+        tools = {t.name: t for t in await client.list_tools()}
+    desc = tools["gnani_tts_synthesize"].description or ""
+    missing = [v["voice"] for v in VOICE_CATALOG_V25 + VOICE_CATALOG_V3 if v["voice"] not in desc]
+    assert not missing, f"voices missing from the tool description: {missing}"
+    assert len(VOICE_CATALOG_V25) == 42 and len(VOICE_CATALOG_V3) == 34
+
+
+@pytest.mark.asyncio
 async def test_tools_registered() -> None:
     async with Client(build_server()) as client:
         names = {t.name for t in await client.list_tools()}

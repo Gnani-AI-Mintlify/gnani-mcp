@@ -246,7 +246,7 @@ Output styles: **verbatim** spells numbers as words and writes English words in 
 
 - Voices are **not** shared between models. There are 34 Timbre v3.0 voices, and every voice speaks all 10 languages. Female: Anitasingh, Chetana, Kalpana, Lakshmi, Lakshmidevi, Neelam, Priyasharm, Rajni, Rekha, Riyaa, Shivani, Shruthi, Sneha, Sohini, Sunaina, Swathi, Tarika, Vasudha. Male: Arko, Avinash, Devansh, Harshad, Mahendra, Manjunath, Nitin, Prakash, Rahulmehta, Rajeev, Rakesh, Santosh, Shubham, Vikramdasu, Vinod, Yashraj.
 - `speed` is optional. On Timbre v3.0 it accepts 0.8 to 1.2 (the service snaps it to 0.8, 1.0 or 1.2); on Timbre v2.5 it accepts 0.85 to 1.15. When you leave it out, the voice's recommended speed is used. A value outside the model's range is rejected before the API is called.
-- Inline audio tags in `text`: `<laugh>`, `<giggle>`, `<sigh>`, `<exhales>`, `<sniffles>`, `<yawns>`, `<coughs>`, `<clears throat>`, `<whispers>`, `<shouting>`, `<excited>`, `<slow>`, `<pauses>` (silence, never spoken). A tag applies until the next tag; tags are billed as characters. With v2.5 they are stripped, and the tool returns a warning.
+- Inline audio tags in `text`: `<laugh>`, `<giggle>`, `<sigh>`, `<exhales>`, `<sniffles>`, `<yawns>`, `<coughs>`, `<clears throat>`, `<whispers>`, `<shouting>`, `<excited>`, `<slow>`, `<pauses>` (silence, never spoken). A tag applies from where it appears to the end of the text, or until the next tag; tags are billed as characters. With v2.5 they are stripped, and the tool returns a warning.
 
 ### `gnani_stt_transcribe` parameters
 
@@ -259,14 +259,14 @@ Output styles: **verbatim** spells numbers as words and writes English words in 
 | `itn_native_numerals` | v2.5 only, with `format="transcribe"`: digits in the native script. |
 | `enable_substitution` + `substitution_map` | Find-and-replace on the final text (up to 10 rules). |
 
-Returns `transcript`, `model`, `request_id` and (v3.0) `detected_language_code`.
+Returns `transcript`, `model`, `request_id` and, on v3.0, `detected_language_code` (left out when the transcript is empty or the format is `transliterate`).
 
 ### `gnani_stt_batch_transcribe` parameters
 
 | Parameter | What it means |
 |---|---|
 | `language_code` | Required. v2.5: one code, or up to 3 for per-file detection. v3.0: `indic-auto` or 1–4 codes. |
-| `audio_path` / `audio_url` | One of: local file (**max 10 MB** this way) or a public link (up to 4 hours). Formats: WAV, MP3, MP4, FLAC, OGG, Opus, M4A, AAC, WebM, AMR. |
+| `audio_path` / `audio_url` | One of: a local file (**max 10 MB**) or a public link (up to 4 hours; the Gnani API expects an HTTPS link). One file per call: ZIPs, multi-file jobs and cloud-storage (S3 and others) sources aren't supported here. Formats: WAV, MP3, MP4, FLAC, OGG, Opus, M4A, AAC, WebM, AMR. |
 | `model`, `format` | `format` is v3.0 only here (`transliterate` isn't available for batch). |
 | `with_diarization`, `num_speakers` | Separate speakers; `num_speakers` (1–8) is an upper limit, not a target. |
 | `with_denoise` | Clean noisy audio first. Leave off for clean recordings. |
@@ -280,7 +280,7 @@ The call waits while the job runs (checks every 10 seconds, up to 30 minutes). I
 
 | Parameter | What it means |
 |---|---|
-| `text`, `voice` | Required. The voice must belong to the chosen model (not case-sensitive). A voice from the other model is rejected, and the message names the right model. |
+| `text`, `voice` | Required. The voice must belong to the chosen model. A voice from the other model is rejected, and the message names the right model. The Gnani API treats voice names as case-sensitive; this server matches them case-insensitively and sends the exact catalog spelling. |
 | `model` | `timbre-v2.5` (default) or `timbre-v3.0`. |
 | `language` | `auto` (default, detected from the script), or a code such as `hi-IN`, `hi-en` (Hinglish). With v2.5, match the voice's language. |
 | `speed` | Optional, see above. 1.0 is normal. |
@@ -376,7 +376,7 @@ GNANI_API_KEY="your-api-key" gnani-mcp --transport http --host 127.0.0.1 --port 
 | Audio tags were removed from my text | Tags only work with `timbre-v3.0`. |
 | `speed ... is outside the range` | Timbre v3.0: 0.8–1.2. Timbre v2.5: 0.85–1.15. Or leave `speed` unset. |
 | Can't find the generated audio | Check `audio_file` in the response. Default folder is your Desktop (`GNANI_MCP_BASE_PATH`). |
-| `429` | The server retries up to 5 times. If you still see it, wait and avoid many parallel requests. |
+| `429` | The Gnani API allows one active request per API key at a time. The server retries up to 5 times with a short wait. If you still see it, wait for the current request to finish and don't run requests in parallel. |
 | `504` / "did not respond within 120s" | The Gnani API took too long. Try again; for long audio use batch transcription. |
 | Empty transcript | Check the clip contains speech; the minimum clip length is 0.1 seconds. |
 
