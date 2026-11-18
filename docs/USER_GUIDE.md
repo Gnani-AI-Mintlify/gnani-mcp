@@ -800,7 +800,7 @@ The folder is created if it doesn't exist. Files are named with the tool and the
 - **Your API key is a secret.** Don't paste it into chats, commit it to Git, or share config files that contain it. Prefer the `~/.gnani/credentials` file, or an environment variable referenced from your config. If a key leaks, stop using it and ask Gnani ([support@gnani.ai](mailto:support@gnani.ai)) to replace it, then update every place you set it.
 - **HTTP mode has no login of its own.** If you run the server with `--transport http`, anyone who can reach its address can use your Gnani account through it. Keep it on `127.0.0.1`.
 - **Project-level configs are shared.** `.cursor/mcp.json` and `.mcp.json` often get committed. Keep keys out of them.
-- **Your audio leaves your computer.** Files you transcribe or use as voice references are uploaded to the Gnani API. Don't use sensitive recordings unless that's acceptable under your organization's policies.
+- **Your audio leaves your computer.** Files you transcribe are uploaded to the Gnani API. Don't use sensitive recordings unless that's acceptable under your organization's policies.
 - **The server runs with your permissions.** It reads any file path the agent gives it and writes audio to the output folder. Review the agent's tool calls when you're unsure. Most agents show them and ask for approval.
 - **Requests count against your Gnani account.** Every transcription and synthesis request is made with your API key. In text-to-speech, expressive tags count as billable characters. A request to "try all the voices" makes many calls. Check your plan and usage in your Gnani account.
 
