@@ -60,9 +60,9 @@ _TERMINAL_STATUSES = frozenset(
     {"COMPLETED", "PARTIAL_FAILURE", "FAILED", "START_FAILED", "CANCELLED"}
 )
 
-# Value sent as ``config.model`` for Prisma v2.5 jobs. (The docs also list
-# ``prisma-v2.5``; this is the value this server has always sent.)
-_BATCH_V25_MODEL = "gnani-prisma-v2.5"
+# Value sent as ``config.model`` for Prisma v2.5 jobs. This is the spelling in the Batch docs.
+# (Earlier releases sent ``gnani-prisma-v2.5``; the API accepts both and stores ``prisma-v2.5``.)
+_BATCH_V25_MODEL = "prisma-v2.5"
 
 # Job statuses accepted by the list-jobs ``status`` filter.
 _JOB_STATUSES = (

@@ -169,7 +169,7 @@ async def test_batch_stt(client: GnaniClient) -> None:
     # Step 1: Create
     body = {
         "config": {
-            "model": "gnani-prisma-v2.5",
+            "model": "prisma-v2.5",
             "language_code": "en-IN",
             "mode": "transcribe",
             "with_diarization": False,
