@@ -26,9 +26,11 @@ from urllib.parse import urlsplit
 from fastmcp import Context, FastMCP
 from pydantic import Field
 
+from gnani_mcp.exceptions import GnaniAPIError
 from gnani_mcp.tools._common import (
     DEFAULT_STT_MODEL,
     SttModel,
+    build_bias,
     build_v3_context,
     guess_audio_mime,
     normalize_stt_language,
@@ -41,6 +43,13 @@ from gnani_mcp.tools._common import (
 logger = logging.getLogger("gnani_mcp.tools.stt_batch")
 
 _BASE = "/stt/v3/batch/jobs"
+_BASE_PRESIGNED = "/stt/v3/batch/v2/jobs"
+
+# Direct (multipart) upload takes files up to 10 MB. Bigger local files go through the
+# presigned-upload route, which accepts up to 5 GiB per file. The switch sits just under
+# 10 MB so a file near the limit never depends on whether "MB" means 10^6 or 2^20 bytes.
+_DIRECT_UPLOAD_MAX_BYTES = 10_000_000
+_PRESIGNED_MAX_BYTES = 5 * 1024**3
 
 # Polling config — poll every 10 s, give up after 30 min.
 _POLL_INTERVAL_SECONDS = 10
@@ -51,9 +60,9 @@ _TERMINAL_STATUSES = frozenset(
     {"COMPLETED", "PARTIAL_FAILURE", "FAILED", "START_FAILED", "CANCELLED"}
 )
 
-# Value sent as ``config.model`` for Prisma v2.5 jobs. (The docs also list
-# ``prisma-v2.5``; this is the value this server has always sent.)
-_BATCH_V25_MODEL = "gnani-prisma-v2.5"
+# Value sent as ``config.model`` for Prisma v2.5 jobs. This is the spelling in the Batch docs.
+# (Earlier releases sent ``gnani-prisma-v2.5``; the API accepts both and stores ``prisma-v2.5``.)
+_BATCH_V25_MODEL = "prisma-v2.5"
 
 # Job statuses accepted by the list-jobs ``status`` filter.
 _JOB_STATUSES = (
@@ -201,8 +210,11 @@ def register(mcp: FastMCP) -> None:
             "**This tool runs the full flow automatically:** "
             "create job → start → poll every 10 s → fetch transcripts → return results.\n\n"
             "**Two ways to provide audio:**\n"
-            "• Local file — set ``audio_path`` (max 10 MB per file via direct upload)\n"
+            "• Local file — set ``audio_path``. Any size up to 5 GiB: files over 10 MB are "
+            "uploaded automatically through the large-file route (the upload can take a while "
+            "on a slow connection).\n"
             "• Public URL — set ``audio_url`` (HTTPS link, no size cap, bounded by 4-hour limit)\n\n"
+            "One file per call. Each file can be up to 4 hours long.\n\n"
             "**Models:**\n"
             "- ``prisma-v2.5`` (default) — pass one language, or up to 3 comma-separated codes "
             "(e.g. ``'hi-IN,en-IN'``) and the API identifies the language per file.\n"
@@ -211,6 +223,9 @@ def register(mcp: FastMCP) -> None:
             "context hints ``keyterms`` / ``topic`` / ``speaker_names``. These are refused with "
             "any other model, and only these combinations are accepted: keyterms, topic, "
             "topic + keyterms, or speaker_names.\n\n"
+            "**Word boosting (prisma-v2.5 only):** ``bias_list`` (up to 100 single words, letters "
+            "only) and ``bias_score`` (0.0, 0.5, 1.0, 1.5, 2.0; default 1.0) favour names and "
+            "brand words. With prisma-v3.0 use ``keyterms``.\n\n"
             "**Languages:** bn-IN, en-IN, gu-IN, hi-IN, kn-IN, ml-IN, mr-IN, pa-IN, ta-IN, te-IN "
             "(per the Batch docs).\n\n"
             "**Diarization:** set ``with_diarization=True`` to get per-speaker segments "
@@ -236,7 +251,8 @@ def register(mcp: FastMCP) -> None:
         audio_path: str | None = Field(
             default=None,
             description=(
-                "Local path to the audio file (max 10 MB). "
+                "Local path to the audio file (up to 5 GiB; files over 10 MB are uploaded via "
+                "the large-file route automatically). "
                 "Supported formats: wav, mp3, mp4, flac, ogg, opus, m4a, aac, webm, amr."
             ),
         ),
@@ -291,6 +307,21 @@ def register(mcp: FastMCP) -> None:
                 "Cannot be combined with keyterms/topic."
             ),
         ),
+        bias_list: list[str] | None = Field(
+            default=None,
+            description=(
+                "prisma-v2.5 only (word boosting). Up to 100 single words to favour, letters "
+                "only (Latin or Indic script): no spaces, digits or punctuation. For "
+                "prisma-v3.0 use keyterms."
+            ),
+        ),
+        bias_score: float | None = Field(
+            default=None,
+            description=(
+                "prisma-v2.5 only. Boost strength for bias_list: 0.0 (off), 0.5, 1.0, 1.5 or "
+                "2.0. Defaults to 1.0 when bias_list is given."
+            ),
+        ),
         callback_url: str | None = Field(
             default=None,
             description=(
@@ -319,6 +350,8 @@ def register(mcp: FastMCP) -> None:
             num_speakers=num_speakers,
             is_multi_channel=is_multi_channel,
             with_denoise=with_denoise,
+            bias_list=bias_list,
+            bias_score=bias_score,
         )
 
         # ── Step 1: Create job ──────────────────────────────────────────
@@ -331,15 +364,30 @@ def register(mcp: FastMCP) -> None:
                     raise ValueError(
                         f"audio_path {path.name!r} is empty (0 bytes); there is nothing to transcribe."
                     )
-                with path.open("rb") as fh:
-                    create_payload = await sc.client.post_multipart(
-                        _BASE,
-                        data={
-                            "config": json.dumps(config),
-                            **({"callback_url": callback_url} if callback_url else {}),
-                        },
-                        files={"files": (path.name, fh, guess_audio_mime(path))},
+                size = path.stat().st_size
+                if size > _PRESIGNED_MAX_BYTES:
+                    raise ValueError(
+                        f"audio_path {path.name!r} is {size / 1024**3:.1f} GiB; the largest file "
+                        "Batch accepts is 5 GiB. Split the recording first."
                     )
+                if size > _DIRECT_UPLOAD_MAX_BYTES:
+                    await ctx.info(
+                        f"{path.name} is {size / 1e6:,.0f} MB; uploading it through the large-file "
+                        "route (this can take a while)…"
+                    )
+                    create_payload = await _create_job_large_file(
+                        sc.client, path, config, callback_url
+                    )
+                else:
+                    with path.open("rb") as fh:
+                        create_payload = await sc.client.post_multipart(
+                            _BASE,
+                            data={
+                                "config": json.dumps(config),
+                                **({"callback_url": callback_url} if callback_url else {}),
+                            },
+                            files={"files": (path.name, fh, guess_audio_mime(path))},
+                        )
         else:
             # Public URL (JSON body)
             body: dict[str, Any] = {
@@ -585,6 +633,61 @@ def register(mcp: FastMCP) -> None:
 # ---------------------------------------------------------------------------
 
 
+async def _cancel_quietly(client: Any, job_id: str) -> None:
+    """Best-effort cancel of a job that will never be started."""
+    try:
+        await client.post_json(f"{_BASE}/{job_id}/cancel", json_body={})
+    except Exception:  # noqa: BLE001 — best effort cleanup
+        logger.warning("Could not cancel job %s", job_id)
+
+
+async def _create_job_large_file(
+    client: Any,
+    path: Path,
+    config: dict[str, Any],
+    callback_url: str | None,
+) -> dict[str, Any]:
+    """Create a job for a local file over 10 MB: create → PUT to the presigned URL.
+
+    Returns the create response (it has ``job_id``). The caller starts the job. If the
+    upload fails, the job is cancelled so no empty ``CREATED`` record is left behind.
+    """
+    body: dict[str, Any] = {
+        "config": config,
+        "source": {"type": "direct_upload_url", "files": [{"filename": path.name}]},
+    }
+    if callback_url:
+        body["callback_url"] = callback_url
+    try:
+        payload = await client.post_json(_BASE_PRESIGNED, json_body=body)
+    except GnaniAPIError as exc:
+        if exc.status_code == 404:
+            # The route is in the Batch docs, but this server does not serve it (yet).
+            raise ValueError(
+                f"{path.name!r} is over 10 MB, and the large-file upload route "
+                f"(POST {_BASE_PRESIGNED}) is not available on this Gnani server. Either upload "
+                "the file somewhere reachable and pass its link as audio_url, or split the "
+                "recording into pieces under 10 MB."
+            ) from exc
+        raise
+
+    job_id = payload["job_id"]
+    uploads = payload.get("uploads") or []
+    url = uploads[0].get("url") if uploads and isinstance(uploads[0], dict) else None
+    if not url:
+        await _cancel_quietly(client, job_id)
+        raise ValueError(
+            "The API did not return an upload link for the large file, so the job was "
+            "cancelled. Try again, or host the file and pass audio_url."
+        )
+    try:
+        await client.put_file(url, path)
+    except Exception:
+        await _cancel_quietly(client, job_id)
+        raise
+    return payload
+
+
 def _build_config(
     *,
     model: str,
@@ -597,6 +700,8 @@ def _build_config(
     num_speakers: int | None = None,
     is_multi_channel: bool = False,
     with_denoise: bool = False,
+    bias_list: list[str] | None = None,
+    bias_score: float | None = None,
 ) -> dict[str, Any]:
     """Validate inputs and build the Batch job ``config`` object."""
     lang = normalize_stt_language(language_code, model, batch=True)
@@ -626,4 +731,5 @@ def _build_config(
     if style is not None:
         config["format"] = style
     config.update(context)
+    config.update(build_bias(model=model, bias_list=bias_list, bias_score=bias_score))
     return config

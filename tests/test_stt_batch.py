@@ -12,7 +12,7 @@ TOPIC = "Loan collection calls for a retail credit card portfolio"
 def test_v25_config_is_unchanged() -> None:
     cfg = _build_config(model="prisma-v2.5", language_code="hi-IN,en-IN", with_diarization=True, num_speakers=2)
     assert cfg == {
-        "model": "gnani-prisma-v2.5",
+        "model": "prisma-v2.5",
         "language_code": "hi-IN,en-IN",
         "mode": "transcribe",
         "with_diarization": True,

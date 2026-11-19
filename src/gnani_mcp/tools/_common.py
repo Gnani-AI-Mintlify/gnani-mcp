@@ -6,6 +6,7 @@ import base64
 import json
 import struct
 import tempfile
+import unicodedata
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -574,6 +575,54 @@ def build_v3_context(
             f"(got {', '.join(supplied)})."
         )
     return supplied
+
+
+MAX_BIAS_WORDS = 100
+BIAS_SCORES: tuple[float, ...] = (0.0, 0.5, 1.0, 1.5, 2.0)
+DEFAULT_BIAS_SCORE = 1.0
+
+
+def build_bias(
+    *,
+    model: str,
+    bias_list: list[str] | None = None,
+    bias_score: float | None = None,
+) -> dict[str, Any]:
+    """Validate Prisma v2.5 word boosting; return ``{"bias_list": [...], "bias_score": x}`` or ``{}``.
+
+    ``bias_list`` is up to 100 single words made of letters only (Latin or Indic script),
+    with no spaces, digits or punctuation. ``bias_score`` is the boost strength (0.0, 0.5,
+    1.0, 1.5 or 2.0); when a list is given without a score, 1.0 is used. Prisma v3.0 has no
+    word boosting: use ``keyterms`` there.
+    """
+    words = [w.strip() for w in (bias_list or []) if w and w.strip()]
+    if not words and bias_score is None:
+        return {}
+    if model == "prisma-v3.0":
+        raise ValueError(
+            "bias_list / bias_score are for prisma-v2.5 only. With prisma-v3.0 use `keyterms` "
+            "(words or short phrases to favour)."
+        )
+    if not words:
+        raise ValueError("bias_score needs a bias_list; pass the words to boost.")
+    if len(words) > MAX_BIAS_WORDS:
+        raise ValueError(f"bias_list accepts at most {MAX_BIAS_WORDS} words (got {len(words)}).")
+    bad = [
+        w for w in words
+        if not all(unicodedata.category(c)[0] in ("L", "M") for c in w)
+    ]
+    if bad:
+        shown = ", ".join(repr(w) for w in bad[:5])
+        raise ValueError(
+            f"bias_list entries must be a single word of letters only (no spaces, digits or "
+            f"punctuation). Not accepted: {shown}. For phrases, use prisma-v3.0 with `keyterms`."
+        )
+    score = DEFAULT_BIAS_SCORE if bias_score is None else float(bias_score)
+    if score not in BIAS_SCORES:
+        raise ValueError(
+            f"bias_score must be one of {', '.join(str(s) for s in BIAS_SCORES)} (got {bias_score})."
+        )
+    return {"bias_list": words, "bias_score": score}
 
 
 def json_field(value: Any) -> str:

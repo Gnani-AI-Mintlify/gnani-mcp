@@ -151,53 +151,8 @@ async def test_stt(client: GnaniClient, audio_path: Path) -> None:
     ok(f"Transcript (ITN):      {payload_itn.get('transcript', '')!r}")
 
 
-async def test_vc(client: GnaniClient, sink: AudioSink, reference_audio: Path) -> None:
-    section("4 · gnani_vc_generate_embedding (Voice Clone)")
-    info(f"Reference audio: {reference_audio}")
-
-    with reference_audio.open("rb") as fh:
-        payload = await client.post_multipart(
-            "/api/v1/tts/voice-clone/embeddings",
-            data={},
-            files={"audio_file": (reference_audio.name, fh, "audio/wav")},
-        )
-
-    data = payload.get("data", {})
-    embedding_obj = data.get("voice_clone_embedding", {})
-    embedding_str = embedding_obj.get("embedding", "")
-    shape = embedding_obj.get("shape")
-    dtype = embedding_obj.get("dtype")
-
-    ok(f"Embedding shape: {shape}  dtype: {dtype}")
-    ok(f"Embedding (first 60 chars): {str(embedding_str)[:60]}…")
-
-    # Step 2 — synthesize with cloned voice
-    section("4b · gnani_vc_synthesize (Voice Clone TTS)")
-    info("Text: 'यह मेरी आवाज़ है।'")
-    audio_bytes = await client.post_json_binary(
-        "/api/v1/tts/inference",
-        json_body={
-            "text": "यह मेरी क्लोन की हुई आवाज़ है।",
-            "model": "vachana-vc-v1",
-            "audio_config": {
-                "sample_rate": 16000,
-                "num_channels": 1,
-                "sample_width": 2,
-                "encoding": "linear_pcm",
-                "container": "wav",
-            },
-            "speaker_embedding": {
-                "embedding": embedding_str,
-                "shape": shape,
-                "dtype": dtype,
-            },
-        },
-    )
-    out = sink.save(audio_bytes, extension="wav", stem="vc_cloned")
-    ok(f"Cloned audio saved: {out}  ({len(audio_bytes):,} bytes)")
-
 async def test_batch_stt(client: GnaniClient) -> None:
-    section("5 · gnani_stt_batch_transcribe (Batch STT)")
+    section("4 · gnani_stt_batch_transcribe (Batch STT)")
     # Use a short public audio file so the job completes quickly.
     # Use a real public speech sample (generated TTS files are local only).
     public_speech_url = (
@@ -214,7 +169,7 @@ async def test_batch_stt(client: GnaniClient) -> None:
     # Step 1: Create
     body = {
         "config": {
-            "model": "gnani-prisma-v2.5",
+            "model": "prisma-v2.5",
             "language_code": "en-IN",
             "mode": "transcribe",
             "with_diarization": False,
@@ -292,10 +247,7 @@ async def main() -> None:
         # 3. STT — transcribe the TTS output
         await test_stt(client, tts_audio)
 
-        # 4. Voice clone — embed + synthesize (uses TTS audio as reference)
-        await test_vc(client, sink, tts_audio)
-
-        # 5. Batch STT — submit a public-URL job and poll to completion
+        # 4. Batch STT — submit a public-URL job and poll to completion
         await test_batch_stt(client)
 
         section("Summary")

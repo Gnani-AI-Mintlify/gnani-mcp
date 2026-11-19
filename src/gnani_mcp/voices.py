@@ -111,6 +111,34 @@ _CATALOGS: dict[str, list[dict[str, str]]] = {
 }
 
 
+_LANGUAGE_ORDER = ("hi-IN", "en-IN", "hi-en", "ta-IN", "te-IN", "kn-IN", "ml-IN", "mr-IN", "bn-IN", "gu-IN", "pa-IN")
+_LANGUAGE_NAMES = {
+    "hi-IN": "Hindi", "en-IN": "English", "hi-en": "Hinglish", "ta-IN": "Tamil", "te-IN": "Telugu",
+    "kn-IN": "Kannada", "ml-IN": "Malayalam", "mr-IN": "Marathi", "bn-IN": "Bengali",
+    "gu-IN": "Gujarati", "pa-IN": "Punjabi",
+}
+
+
+def describe_voices_v25() -> str:
+    """Every Timbre v2.5 voice, grouped by preferred language (built from the catalog)."""
+    lines = []
+    for code in _LANGUAGE_ORDER:
+        voices = sorted((v for v in VOICE_CATALOG_V25 if v["language"] == code), key=lambda v: v["voice"])
+        if voices:
+            names = ", ".join(f"{v['voice']} ({v['gender'][0]})" for v in voices)
+            lines.append(f"- {_LANGUAGE_NAMES[code]} ({code}): {names}")
+    return "\n".join(lines)
+
+
+def describe_voices_v3() -> str:
+    """Every Timbre v3.0 voice, grouped by gender (built from the catalog)."""
+    out = []
+    for gender in ("Female", "Male"):
+        names = ", ".join(sorted(v["voice"] for v in VOICE_CATALOG_V3 if v["gender"] == gender))
+        out.append(f"- {gender}: {names}")
+    return "\n".join(out)
+
+
 def get_catalog(model: str) -> list[dict[str, str]]:
     """Return the voice catalog for *model*."""
     try:

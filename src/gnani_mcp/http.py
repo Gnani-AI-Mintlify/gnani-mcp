@@ -11,7 +11,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -34,6 +35,10 @@ SOURCE = "mcp"
 
 # Generous but bounded timeouts: connect quickly, give reads up to 2 min.
 _TIMEOUT = httpx.Timeout(connect=10.0, read=120.0, write=30.0, pool=5.0)
+
+# Large-file uploads to a presigned URL: a slow link can take a while to push each chunk.
+_UPLOAD_TIMEOUT = httpx.Timeout(connect=30.0, read=300.0, write=600.0, pool=30.0)
+_UPLOAD_CHUNK_BYTES = 1024 * 1024
 
 # HTTP 429 handling — the API asks clients to "wait and retry with backoff".
 # Rate-limited requests are rejected before any work is done, so retrying every
@@ -357,6 +362,31 @@ class GnaniClient:
                 resp.status_code,
             )
         return resp.json()
+
+    async def put_file(self, url: str, path: Path) -> None:
+        """PUT a local file to a pre-signed upload URL (no auth header), streaming it.
+
+        The file is sent in chunks with an explicit ``Content-Length`` so a multi-GB
+        recording never has to fit in memory (and so S3-style storage accepts it).
+        """
+        size = path.stat().st_size
+
+        async def chunks() -> AsyncIterator[bytes]:
+            with path.open("rb") as fh:
+                while chunk := fh.read(_UPLOAD_CHUNK_BYTES):
+                    yield chunk
+
+        try:
+            async with httpx.AsyncClient(timeout=_UPLOAD_TIMEOUT, follow_redirects=True) as c:
+                resp = await c.put(url, content=chunks(), headers={"Content-Length": str(size)})
+        except httpx.TransportError as exc:
+            # The URL is signed, so name the step rather than echo it.
+            raise connection_error(exc, "PUT", "large-file upload") from exc
+        if not resp.is_success:
+            raise GnaniAPIError(
+                f"Large-file upload failed (HTTP {resp.status_code}): {resp.text[:200]}",
+                resp.status_code,
+            )
 
     # ------------------------------------------------------------------
     # Lifecycle

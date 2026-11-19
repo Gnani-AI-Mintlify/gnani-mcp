@@ -17,6 +17,7 @@ from pydantic import Field
 from gnani_mcp.tools._common import (
     DEFAULT_STT_MODEL,
     SttModel,
+    build_bias,
     build_v3_context,
     guess_audio_mime,
     json_field,
@@ -58,6 +59,10 @@ def register(mcp: FastMCP) -> None:
             "When ``format`` is omitted: v2.5 uses ``verbatim``; v3.0 picks ``transcribe`` for a "
             "single ``hi-IN``/``en-IN`` and ``verbatim`` otherwise — pass ``format`` explicitly "
             "to keep output stable when moving from v2.5 to v3.0.\n\n"
+            "**Word boosting (prisma-v2.5 only):** ``bias_list`` is up to 100 single words "
+            "(letters only, no spaces or digits) to favour, such as brand names; ``bias_score`` "
+            "sets the strength (0.0, 0.5, 1.0, 1.5, 2.0; default 1.0). Works best with "
+            "``format='verbatim'``. On prisma-v3.0 use ``keyterms`` instead.\n\n"
             "Use ``enable_substitution=True`` with a ``substitution_map`` to apply "
             "find-and-replace rules on the final transcript (max 10 rules)."
         ),
@@ -157,6 +162,21 @@ def register(mcp: FastMCP) -> None:
                 "Not diarization."
             ),
         ),
+        bias_list: list[str] | None = Field(
+            default=None,
+            description=(
+                "prisma-v2.5 only (word boosting). Up to 100 single words to favour, letters "
+                "only (Latin or Indic script): no spaces, digits or punctuation. Best with "
+                "format='verbatim'. For prisma-v3.0 use keyterms."
+            ),
+        ),
+        bias_score: float | None = Field(
+            default=None,
+            description=(
+                "prisma-v2.5 only. Boost strength for bias_list: 0.0 (off), 0.5, 1.0, 1.5 or "
+                "2.0. Defaults to 1.0 when bias_list is given."
+            ),
+        ),
         request_id: str | None = Field(
             default=None,
             description="Optional correlation ID for this request (useful for support / logging).",
@@ -178,6 +198,8 @@ def register(mcp: FastMCP) -> None:
             speaker_names=speaker_names,
         )
 
+        bias = build_bias(model=model, bias_list=bias_list, bias_score=bias_score)
+
         require_upload_filename(
             file_path=audio_path, file_base64=audio_base64, file_url=audio_url, filename=filename
         )
@@ -196,6 +218,7 @@ def register(mcp: FastMCP) -> None:
                 request_id=request_id,
                 model=model,
                 context=context,
+                bias=bias,
             )
 
             with path.open("rb") as fh:
@@ -232,6 +255,7 @@ def _build_form_data(
     request_id: str | None,
     model: str = DEFAULT_STT_MODEL,
     context: dict[str, Any] | None = None,
+    bias: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     """Build the ``multipart/form-data`` field dict for the STT endpoint.
 
@@ -259,6 +283,10 @@ def _build_form_data(
         data["substitution_map"] = json.dumps(substitution_map)
     if request_id is not None:
         data["request_id"] = request_id
+
+    if bias:
+        data["bias_list"] = json_field(bias["bias_list"])
+        data["bias_score"] = str(bias["bias_score"])
 
     for key, value in (context or {}).items():
         data[key] = json_field(value) if isinstance(value, list) else value

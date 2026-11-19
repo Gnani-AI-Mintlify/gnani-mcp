@@ -83,18 +83,17 @@ def build_server() -> FastMCP:
     mcp = FastMCP(
         name="gnani-mcp",
         instructions=(
-            "Gnani AI MCP server — Speech-to-Text, Text-to-Speech, and Voice Clone "
+            "Gnani AI MCP server — Speech-to-Text and Text-to-Speech "
             "for 10 Indian languages. All tools require GNANI_API_KEY to be set."
         ),
         lifespan=_lifespan,
     )
 
-    from gnani_mcp.tools import stt, stt_batch, tts, voice_clone
+    from gnani_mcp.tools import stt, stt_batch, tts
 
     stt.register(mcp)
     stt_batch.register(mcp)
     tts.register(mcp)
-    voice_clone.register(mcp)
 
     return mcp
 
@@ -163,7 +162,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         prog="gnani-mcp",
         description=(
-            "Gnani AI MCP server — Speech-to-Text, Text-to-Speech, and Voice Clone "
+            "Gnani AI MCP server — Speech-to-Text and Text-to-Speech "
             "for Indian languages"
         ),
     )

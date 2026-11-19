@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "gnani-mcp"
 version = "0.2.2"
-description = "Official Gnani AI MCP server — Speech-to-Text, Text-to-Speech, and Voice Clone for Indian languages"
+description = "Official Gnani AI MCP server — Speech-to-Text and Text-to-Speech for Indian languages"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -13,7 +13,7 @@ license-files = ["LICENSE"]
 authors = [{ name = "Gnani AI", email = "support@gnani.ai" }]
 keywords = [
     "gnani", "vachana", "mcp", "model-context-protocol",
-    "speech-to-text", "stt", "text-to-speech", "tts", "voice-clone",
+    "speech-to-text", "stt", "text-to-speech", "tts",
     "indic", "indian-languages", "asr",
 ]
 classifiers = [
